@@ -1,0 +1,101 @@
+---
+title: "Wheat Analysis"
+output: html_notebook
+---
+
+```{r}
+library(MASS)
+library(ggplot2)
+library(cluster)    # clustering algorithms
+library(factoextra) # clustering algorithms & visualization
+library(data.table)
+library(psych)
+library(ggridges)
+library(gridExtra)
+```
+
+# Overview
+
+```{r}
+seed_raw <- read.csv("seeds_dataset.txt", sep = "\t")
+colnames(seed_raw) <- c("area", "parimenter", "compactness", "kernel_length", "kernel_width", "asymmetry", "grove_length", "type")
+seed_raw$type <- as.factor(seed_raw$type)
+head(seed_raw)
+```
+
+# EDA
+
+```{r}
+seed_raw[rowSums(is.na(seed_raw)) > 0,]
+```
+
+```{r}
+describe(seed_raw[, -c(8)])
+```
+
+
+```{r}
+ggplot(seed_raw, aes(x = area)) + geom_histogram(bins = 20)
+ggplot(seed_raw, aes(x = parimenter)) + geom_histogram(bins = 20)
+ggplot(seed_raw, aes(x = compactness)) + geom_histogram(bins = 20)
+ggplot(seed_raw, aes(x = kernel_length)) + geom_histogram(bins = 20)
+ggplot(seed_raw, aes(x = kernel_width)) + geom_histogram(bins = 20)
+ggplot(seed_raw, aes(x = asymmetry)) + geom_histogram(bins = 20)
+ggplot(seed_raw, aes(x = grove_length)) + geom_histogram(bins = 20)
+```
+
+```{r}
+describeBy(seed_raw[, -c(8)], seed_raw$type)
+```
+
+```{r}
+area_plot <- ggplot(seed_raw, aes(y=type, x=area, fill=type)) +
+    geom_density_ridges(alpha=0.6, stat="binline", bins=20) +
+    theme_ridges() +
+    theme(
+      legend.position="none",
+    )
+parimenter_plot <- ggplot(seed_raw, aes(y=type, x=parimenter, fill=type)) +
+    geom_density_ridges(alpha=0.6, stat="binline", bins=20) +
+    theme_ridges() +
+    theme(
+      legend.position="none",
+    )
+length_plot <- ggplot(seed_raw, aes(y=type, x=kernel_length, fill=type)) +
+    geom_density_ridges(alpha=0.6, stat="binline", bins=20) +
+    theme_ridges() +
+    theme(
+      legend.position="none",
+    )
+width_plot <- ggplot(seed_raw, aes(y=type, x=kernel_width, fill=type)) +
+    geom_density_ridges(alpha=0.6, stat="binline", bins=20) +
+    theme_ridges() +
+    theme(
+      legend.position="none",
+    )
+
+grove_plot <- ggplot(seed_raw, aes(y=type, x=grove_length, fill=type)) +
+    geom_density_ridges(alpha=0.6, stat="binline", bins=20) +
+    theme_ridges() +
+    theme(
+      legend.position="none",
+    )
+grid.arrange(area_plot, parimenter_plot, length_plot, width_plot, grove_plot)
+```
+
+```{r}
+compact_plot <- ggplot(seed_raw, aes(y=type, x=compactness, fill=type)) +
+    geom_density_ridges(alpha=0.6, stat="binline", bins=20) +
+    theme_ridges() +
+    theme(
+      legend.position="none",
+    )
+asymmetry_plot <- ggplot(seed_raw, aes(y=type, x=asymmetry, fill=type)) +
+    geom_density_ridges(alpha=0.6, stat="binline", bins=20) +
+    theme_ridges() +
+    theme(
+      legend.position="none",
+    )
+grid.arrange(compact_plot, asymmetry_plot)
+```
+
