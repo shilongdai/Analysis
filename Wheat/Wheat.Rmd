@@ -12,6 +12,10 @@ library(data.table)
 library(psych)
 library(ggridges)
 library(gridExtra)
+library(GGally)
+library(glmnet)
+library(caret)
+set.seed(97) 
 ```
 
 # Overview
@@ -97,5 +101,169 @@ asymmetry_plot <- ggplot(seed_raw, aes(y=type, x=asymmetry, fill=type)) +
       legend.position="none",
     )
 grid.arrange(compact_plot, asymmetry_plot)
+```
+
+```{r}
+seed_scaled <- data.frame(seed_raw)
+seed_scaled[, 1:7] <- scale(seed_raw[, 1:7])
+```
+
+```{r}
+seed_pcs <- prcomp(seed_scaled[, 1:7], scale = FALSE)
+seed_pcs_sum <- summary(seed_pcs)
+print(as.data.frame(seed_pcs_sum$importance[, 1:7]))
+print(as.data.frame(seed_pcs$rotation))
+```
+
+```{r}
+fviz_eig(seed_pcs, addlabels=TRUE)
+seed_pcs_dat <- data.frame(seed_pcs$x)
+seed_pcs_dat$type <- seed_scaled$type
+```
+
+```{r}
+ggpairs(
+  seed_pcs_dat,
+  title = "Pairwise PC Plot",
+  columns = c(1, 2, 3),
+  upper = list(continuous = "points"),
+  mapping = ggplot2::aes(color = type),
+  legend = 1
+)
+```
+
+
+
+```{r}
+fviz_nbclust(seed_pcs_dat[, 1:3], kmeans, method = "wss")
+```
+
+```{r}
+k <- 3
+k_clusters <-
+  kmeans(
+    seed_pcs_dat[, 1:3],
+    centers = k,
+    nstart = 25,
+    iter.max = 1000
+  )
+seed_pcs_cluster <- data.frame(seed_pcs_dat)
+seed_pcs_cluster$cluster <- as.factor(k_clusters$cluster)
+```
+
+```{r}
+ggplot(seed_pcs_cluster, aes(x = PC1, y = PC2, color = type, shape = cluster)) +
+  geom_point(size = 1.5)
+```
+
+```{r}
+seed_pcs_cluster_renamed <- data.frame(seed_pcs_cluster)
+seed_pcs_cluster_renamed$cluster[seed_pcs_cluster$cluster == 1] <- 3
+seed_pcs_cluster_renamed$cluster[seed_pcs_cluster$cluster == 3] <- 1
+
+# Summarize results of clustering.
+ggplot(data = seed_pcs_cluster_renamed, aes(fill = type)) + aes(x = cluster) + 
+  geom_bar() + xlab("Cluster") + ylab("Count") + ggtitle("Clusters with 3 PCs")
+```
+
+```{r}
+PC1_type_mean <-tapply(seed_pcs_cluster_renamed$PC1, seed_pcs_cluster_renamed$type, mean)
+PC2_type_mean <- tapply(seed_pcs_cluster_renamed$PC2, seed_pcs_cluster_renamed$type, mean)
+PC3_type_mean <- tapply(seed_pcs_cluster_renamed$PC3, seed_pcs_cluster_renamed$type, mean)
+PC1_type_stdev <-tapply(seed_pcs_cluster_renamed$PC1, seed_pcs_cluster_renamed$type, sd)
+PC2_type_stdev <- tapply(seed_pcs_cluster_renamed$PC2, seed_pcs_cluster_renamed$type, sd)
+PC3_type_stdev <- tapply(seed_pcs_cluster_renamed$PC3, seed_pcs_cluster_renamed$type, sd)
+PC1_cluster_mean <-tapply(seed_pcs_cluster_renamed$PC1, seed_pcs_cluster_renamed$cluster, mean)
+PC2_cluster_mean <- tapply(seed_pcs_cluster_renamed$PC2, seed_pcs_cluster_renamed$cluster, mean)
+PC3_cluster_mean <- tapply(seed_pcs_cluster_renamed$PC3, seed_pcs_cluster_renamed$cluster, mean)
+PC1_cluster_stdev <-tapply(seed_pcs_cluster_renamed$PC1, seed_pcs_cluster_renamed$cluster, sd)
+PC2_cluster_stdev <- tapply(seed_pcs_cluster_renamed$PC2, seed_pcs_cluster_renamed$cluster, sd)
+PC3_cluster_stdev <- tapply(seed_pcs_cluster_renamed$PC3, seed_pcs_cluster_renamed$cluster, sd)
+
+PC_cluster_summary <- rbind(PC1_type_mean, PC1_cluster_mean, PC2_type_mean, PC2_cluster_mean,
+                            PC3_type_mean, PC3_cluster_mean, PC1_type_stdev, PC1_cluster_stdev,
+                            PC2_type_stdev, PC2_cluster_stdev, PC3_type_stdev, PC3_cluster_stdev)
+PC_cluster_summary
+```
+
+```{r}
+PC_type_summary <- rbind(PC1_type_mean, PC2_type_mean, PC3_type_mean,
+                         PC1_type_stdev, PC2_type_stdev, PC3_type_stdev)
+PC_type_summary
+```
+
+```{r}
+lasso_mat <- model.matrix(type~., seed_pcs_dat)[, -1]
+cv.lasso <- cv.glmnet(lasso_mat, seed_pcs_dat$type, family = "multinomial")
+plot(cv.lasso)
+```
+
+```{r}
+coef(cv.lasso, cv.lasso$lambda.1se)
+```
+
+
+```{r}
+train.control <- trainControl(method = "cv", number = 10)
+train_size <- floor(0.75 * nrow(seed_raw))
+train_ind <- sample(seq_len(nrow(seed_raw)), size = train_size)
+train <- seed_raw[train_ind, ]
+test <- seed_raw[-train_ind, ]
+
+train$type <- as.factor(train$type)
+
+test$Revenue <- as.factor(test$type)
+
+train_numerical <- train[, 1:7]
+train_pcs <- prcomp(train_numerical, scale = TRUE)
+
+adopted_train <- data.frame(train_pcs$x)
+adopted_train$type <- train$type
+
+head(adopted_train)
+head(train)
+```
+
+```{r}
+test_pcs <- predict(train_pcs, test)
+adopted_test <- data.frame(test_pcs[, 1:7])
+adopted_test$type <- test$type
+head(test)
+head(adopted_test)
+```
+
+```{r}
+model.knn <- train(type~., data = adopted_train[, c(1, 2, 4, 5, 8)], method = "knn", trControl = train.control)
+
+print(model.knn)
+```
+
+```{r}
+model.qda <- train(type~., data = adopted_train[, c(1, 2, 4, 5, 8)], method = "qda", trControl = train.control)
+
+print(model.qda)
+```
+
+```{r}
+tunegrid=data.frame(C=c(seq(0.01, 2, length = 20), 10))
+# Train the model
+model.cvsvm <- train(type~., data = adopted_train[, c(1:5, 8)], method = "svmLinear",
+               trControl = train.control, tuneGrid = tunegrid)
+# Summarize the results
+model.cvsvm$results[model.rbfsvm$results$C == model.rbfsvm$bestTune$C[1] & model.rbfsvm$results$sigma == model.rbfsvm$bestTune$sigma[1], ]
+```
+
+
+```{r}
+tunegrid_rbf <- expand.grid(C=c(seq(0.01, 2, length = 20), 10), sigma=c(seq(0.01, 2, length = 20), 10))
+# Train the model
+model.rbfsvm <- train(type~., data = adopted_train, method = "svmRadial",
+               trControl = train.control, tuneGrid = tunegrid_rbf)
+# Summarize the results
+model.rbfsvm$results[model.rbfsvm$results$C == model.rbfsvm$bestTune$C[1] & model.rbfsvm$results$sigma == model.rbfsvm$bestTune$sigma[1], ]
+```
+
+```{r}
+
 ```
 
