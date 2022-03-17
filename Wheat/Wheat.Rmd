@@ -5,6 +5,11 @@ output:
   html_notebook: default
 ---
 
+```{r include=FALSE}
+knitr::opts_chunk$set(tidy.opts = list(width.cutoff = 60), tidy = TRUE)
+```
+
+
 ```{r message=FALSE, error=FALSE}
 library(MASS)
 library(ggplot2)
@@ -29,7 +34,7 @@ which applies X-ray techniques to extract the information of the kernel automati
 There are 7 numerical variables recorded:
 
 - area: the area of the kernel
-- parimenter: the perimeter of the wheat kernel
+- parameter: the perimeter of the wheat kernel
 - compactness: the geometric compactness of the shape of the kernel
 - kernel length: the length of the kernel
 - kernel width: the width of the kernel
@@ -46,8 +51,8 @@ best performance on both cross validation and the test set, with an accuracy of
 0.969 and 0.981 respectively.
 
 ```{r message=FALSE, error=FALSE}
-seed_raw <- read.csv("seeds_dataset.txt", sep = "\t")
-colnames(seed_raw) <- c("area", "parimenter", "compactness", "kernel_length", "kernel_width", "asymmetry", "grove_length", "type")
+seed_raw <- read.csv("Seed_Data.csv")
+colnames(seed_raw) <- c("area", "parameter", "compactness", "kernel_length", "kernel_width", "asymmetry", "grove_length", "type")
 seed_raw$type <- as.factor(seed_raw$type)
 head(seed_raw)
 ```
@@ -109,7 +114,7 @@ area_plot <- ggplot(seed_raw, aes(y=type, x=area, fill=type)) +
     theme(
       legend.position="none",
     )
-parimenter_plot <- ggplot(seed_raw, aes(y=type, x=parimenter, fill=type)) +
+parimenter_plot <- ggplot(seed_raw, aes(y=type, x=parameter, fill=type)) +
     geom_density_ridges(alpha=0.6, stat="binline", bins=20) +
     theme_ridges() +
     theme(
@@ -201,7 +206,7 @@ seed_pcs_dat$type <- seed_scaled$type
 
 The variables are plotted together with respect to the first 2 PCS are shown below. 
 Additionally, the weight of the variables are listed for the first 3 PCs. From 
-the plot, grove_length, kernel_length, parimenter, area, and kernel_width are 
+the plot, grove_length, kernel_length, parameter, area, and kernel_width are 
 correlated with each other around the first PC. On the other hand, compactness 
 and asymmetry are separated from the rest of the group going in different directions.
 This pattern extends to the 3rd PC as well, for the weight of the grove_length etc 
@@ -231,7 +236,7 @@ ggpairs(
 )
 ```
 
-## Cluster Analysis
+# Cluster Analysis
 
 Due to the shape of the points in the PC plots, the KMean algorithm was chosen to 
 create clusters against the PCA transformed data. In KMean clustering, the number 
@@ -281,7 +286,7 @@ ggplot(data = seed_pcs_cluster_renamed, aes(fill = type)) + aes(x = cluster) +
 ```
 
 The mean and standard deviation of the clusters with their corresponding types are 
-listed below. The clusters and types have almost identical mean and standard 
+listed below. The clusters and types have similar mean and standard 
 deviation, which indicates that the distribution of the points on the partitions 
 created by KMeans is similar to the distribution of the points by type.
 
@@ -301,28 +306,9 @@ PC_cluster_summary
 ```
 
 
-## Classification
+# Classification
 
-### Variable Selection
-
-LASSO is a regularized form of linear regression where the added cost is the absolute 
-weight of the coefficients. For multiclass classification problems, the output of the linear 
-model is the log likelihood ratio of a class against all other class. A notable property 
-of LASSO regression is that the coefficients could be set to 0 due to the added cost. 
-
-In this case, due to the zeroing property, LASSO is used to guide variable selection. 
-The final coefficients are shown below. In addition to PC1, PC2, PC4, PC5 discussed 
-before with respect to separation, PC6 had significant weight for type 2 wheats. 
-But, all other PCs have either zero weights or small weights. Thus, the PC1, PC2, 
-PC5, PC5, and PC6 will be used for prediction.
-
-```{r}
-lasso_mat <- model.matrix(type~., seed_pcs_dat)[, -1]
-cv.lasso <- cv.glmnet(lasso_mat, seed_pcs_dat$type, family = "multinomial")
-coef(cv.lasso, cv.lasso$lambda.min)
-```
-
-### Training and Cross Validation
+## Training and Cross Validation
 
 The dataset is divided into a test set and a training set by a 75 to 25 split. 
 Furthermore, 10-fold cross validation would be performed on the training set to 
@@ -361,14 +347,34 @@ head(test)
 head(adopted_test)
 ```
 
-### KNN
+## Variable Selection
+
+LASSO is a regularized form of linear regression where the added cost is the absolute 
+weight of the coefficients. For multiclass classification problems, the output of the linear 
+model is the log likelihood ratio of a class against all other class. A notable property 
+of LASSO regression is that the coefficients could be set to 0 due to the added cost. 
+
+In this case, due to the zeroing property, LASSO is used to guide variable selection. 
+The final coefficients are shown below. In addition to PC1, PC2, PC4, PC5 discussed 
+before with respect to separation, PC6 had significant weight for type 2 wheats. 
+But, all other PCs have either zero weights or small weights. Thus, the PC1, PC2, 
+PC5, PC5, and PC6 will be used for prediction.
+
+```{r}
+lasso_mat <- model.matrix(type~., adopted_train)[, -1]
+cv.lasso <- cv.glmnet(lasso_mat, adopted_train$type, family = "multinomial")
+coef(cv.lasso, cv.lasso$lambda.min)
+```
+
+
+## KNN
 
 KNN is a simple but effective method for classification. For each points to be 
 classified, the nearest K neighbors to the points would be found, and a vote would 
 be performed with the K neighbors to determine the class of the point.
 
 It is used as a baseline in this analysis since it is the most straightforward 
-method. The optimal K was 9, and the associated accuracy was 92.25%.
+method. The optimal K was 7, and the associated accuracy was 93.02%.
 
 ```{r}
 model.knn <- train(type~., data = adopted_train[, c(1, 2, 4, 5, 6, 8)], method = "knn", trControl = train.control)
@@ -376,7 +382,7 @@ model.knn <- train(type~., data = adopted_train[, c(1, 2, 4, 5, 6, 8)], method =
 print(model.knn)
 ```
 
-### QDA
+## QDA
 
 Quadratic Discriminant Analysis is a classical approach based on Bayesian probability. 
 It makes the assumption that each class was generated from a multivariate gaussian 
@@ -391,7 +397,7 @@ Furthermore, the standard deviation of the first two PCs are clearly different, 
 implies that QDA would be more fitting than LDA, which assumes the same variance 
 across classes.
 
-QDA was able to achieve an accuracy of 96.87% in the cross validation, which is 
+QDA was able to achieve an accuracy of 94.25% in the cross validation, which is 
 higher than the KNN result.
 
 ```{r}
@@ -400,7 +406,7 @@ model.qda <- train(type~., data = adopted_train[, c(1, 2, 4, 5, 6, 8)], method =
 print(model.qda)
 ```
 
-### SVM
+## SVM
 
 The Support Vector Machine in its raw form finds a hyperplane that separates two 
 sets of points. The hyperplane maximizes the margin between the plane and the two 
@@ -417,7 +423,7 @@ the expoential function, it can be interpreted as a taylor series expansion,
 which can lead to a projection into a space with arbitrarily large dimension. Thus, 
 it is one of the most flexible kernel.
 
-With the RBF kernel, the accuracy on cross validation was 96.75%.
+With the RBF kernel, the accuracy on cross validation was 97.46%.
 
 ```{r}
 tunegrid_rbf <- expand.grid(C=c(seq(0.01, 2, length = 20), 10), sigma=c(seq(0.01, 2, length = 20), 10))
@@ -431,12 +437,35 @@ model.rbfsvm$results[model.rbfsvm$results$C == model.rbfsvm$bestTune$C[1] & mode
 In both cases, the models clearly out-performed KNN on cross validation. Furthermore, 
 both QDA and SVM had similar performance on cross validation.
 
-### QDA on Testing Set
+## KNN on Testing Set
+
+KNN was able to achieve an accuracy of 96.23 on the test set, which was higher 
+than the cross validation result.
+
+```{r}
+predict_knn <- predict(model.knn, adopted_test)
+cm.knn <-
+  confusionMatrix(
+    factor(predict_knn),
+    factor(adopted_test$type),
+    dnn = c("Prediction", "Label"),
+  )
+cm.knn
+
+ggplot(as.data.frame(cm.knn$table),
+         aes(Label, Prediction, fill = Freq)) + 
+  geom_tile() + geom_text(aes(label = Freq)) + 
+  scale_fill_gradient(low = "white") + 
+  labs(x = "Label", y = "Prediction") + ggtitle("Confusion Matrix, Features")
+```
+
+
+## QDA on Testing Set
 
 The QDA model trained on the entire training set was applied to the test set. 
 The model performed pretty well, with an accuracy of 98.11%, which is higher than 
 the accuracy in cross validation. Furthermore, as shown by the confusion matrix, 
-only 1 mistake was made.
+only 1 mistake was made. Compared to KNN, it made 1 less mistake in the same category.
 
 ```{r}
 predict_qda <- predict(model.qda, adopted_test)
@@ -455,11 +484,11 @@ ggplot(as.data.frame(cm.qda$table),
   labs(x = "Label", y = "Prediction") + ggtitle("Confusion Matrix, Features")
 ```
 
-### SVM on Testing Set
+## SVM on Testing Set
 
 The fully trained SVM was applied to the test set. It achieved an accuracy of 
-96.23%, which is roughly the same as the accuracy in cross validation. Based on, 
-the confusion matrix, SVM only made 2 mistakes, with one being similar to the QDA. 
+98.11%, which is roughly the same as the accuracy in cross validation. Based on, 
+the confusion matrix, SVM only made 1 mistake similar to the one made by QDA.
 
 ```{r}
 predict_svm <- predict(model.rbfsvm, adopted_test)
@@ -478,12 +507,12 @@ ggplot(as.data.frame(cm.svm$table),
   labs(x = "Label", y = "Prediction") + ggtitle("Confusion Matrix, Features")
 ```
 
-## Discussion
+# Discussion
 
 Both QDA and SVM are successful at predicting the type of wheat from the PCA transformed 
-dataset. On both the cross validation as well as test set, QDA performed slightly better 
-than SVM. Additionally, QDA can be more useful than SVM, since it provides a 
-complete distribution over the classes of wheat. Thus, it can be a good characterization 
-of the wheat types. Finally, the success of QDA suggests that the Gaussian EM 
-algorithm may also achieve a good clustering of the data points.
+dataset. SVM performed better in cross validation, but both performed equally on 
+the test set. In both cases, the performance was better than KNN.
+However, despite not performing as well as SVM on CV, QDA can be more useful than SVM, 
+since it provides a complete distribution over the classes of wheat. Thus, it can 
+be a good characterization of the wheat types.
 
