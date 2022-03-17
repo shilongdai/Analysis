@@ -1,13 +1,15 @@
 ---
 title: "Wheat Analysis"
-output: html_notebook
+output:
+  pdf_document: default
+  html_notebook: default
 ---
 
-```{r}
+```{r message=FALSE, error=FALSE}
 library(MASS)
 library(ggplot2)
-library(cluster)    # clustering algorithms
-library(factoextra) # clustering algorithms & visualization
+library(cluster)
+library(factoextra)
 library(data.table)
 library(psych)
 library(ggridges)
@@ -20,7 +22,30 @@ set.seed(97)
 
 # Overview
 
-```{r}
+Three types of wheat were examined with respect to the geometric properties of
+their kernels. The source of the wheat data was the paper https://www.researchgate.net/publication/226738117_Complete_Gradient_Clustering_Algorithm_for_Features_Analysis_of_X-Ray_Images, 
+which applies X-ray techniques to extract the information of the kernel automatically.
+
+There are 7 numerical variables recorded:
+
+- area: the area of the kernel
+- parimenter: the perimeter of the wheat kernel
+- compactness: the geometric compactness of the shape of the kernel
+- kernel length: the length of the kernel
+- kernel width: the width of the kernel
+- asymmetry: the asymmetry of the shape of the kernel
+- grove_length: the length of the grove
+- type: the type of wheat, which are Kama, Rosa, and Canadian
+
+Exploratory data analysis were conducted to inspect the distribution of the variables.
+Then, PCA was applied to reduce the dimension of the data. The result of PCA was
+used to do KMeans clustering using 3 clusters. It was found that the clusters closely 
+resembles the type of wheat. Finally, QDA and SVM were applied to predict the type 
+of wheat from the transformed data, with KNN as a baseline. The QDA achieved the
+best performance on both cross validation and the test set, with an accuracy of 
+0.969 and 0.981 respectively.
+
+```{r message=FALSE, error=FALSE}
 seed_raw <- read.csv("seeds_dataset.txt", sep = "\t")
 colnames(seed_raw) <- c("area", "parimenter", "compactness", "kernel_length", "kernel_width", "asymmetry", "grove_length", "type")
 seed_raw$type <- as.factor(seed_raw$type)
@@ -29,30 +54,55 @@ head(seed_raw)
 
 # EDA
 
-```{r}
+## Overall Statistics
+
+The dataset was complete without any missing entries, so no pre-processing to
+fill in missing data was required.
+
+```{r message=FALSE, error=FALSE}
 seed_raw[rowSums(is.na(seed_raw)) > 0,]
 ```
 
-```{r}
+The descriptive statistics of the dataset is listed below for each variable. It
+can be seen that the variables are centered around different means with different
+standard deviations. Furthermore, all of the variables are somewhat skewed to the
+right, with the exception of compactness. All of the variables have small standard deviations compared to the mean,
+with the exception of area, parimenter, and asymmetry, so the variables are fairly
+centered around the mean. The trimmed mean, removing the tails, have similar value
+with the mean compared to the standard deviation, which suggests that there are
+no significant outliers towards a single direction.
+
+```{r message=FALSE, error=FALSE}
 describe(seed_raw[, -c(8)])
 ```
 
+A few representative plots are shown below. Regarding the shape of the plots, 
+asymmetry and compactness are unimodal, area and grove_length are bimodal, while kernel_width 
+almost seems to have 4 peaks. Both compactness and asymmetry are almost symmetrical,
+while both peaks of grove_length seems to be symmetrical around their respective 
+centers.
 
-```{r}
-ggplot(seed_raw, aes(x = area)) + geom_histogram(bins = 20)
-ggplot(seed_raw, aes(x = parimenter)) + geom_histogram(bins = 20)
-ggplot(seed_raw, aes(x = compactness)) + geom_histogram(bins = 20)
-ggplot(seed_raw, aes(x = kernel_length)) + geom_histogram(bins = 20)
-ggplot(seed_raw, aes(x = kernel_width)) + geom_histogram(bins = 20)
-ggplot(seed_raw, aes(x = asymmetry)) + geom_histogram(bins = 20)
-ggplot(seed_raw, aes(x = grove_length)) + geom_histogram(bins = 20)
+```{r message=FALSE, error=FALSE}
+area_plot <- ggplot(seed_raw, aes(x = area)) + geom_histogram(bins = 20)
+compactness_plot <- ggplot(seed_raw, aes(x = compactness)) + geom_histogram(bins = 20)
+width_plot <- ggplot(seed_raw, aes(x = kernel_width)) + geom_histogram(bins = 20)
+asymmetry_plot <- ggplot(seed_raw, aes(x = asymmetry)) + geom_histogram(bins = 20)
+grove_plot <- ggplot(seed_raw, aes(x = grove_length)) + geom_histogram(bins = 20)
+
+grid.arrange(area_plot, compactness_plot, width_plot, asymmetry_plot, grove_plot)
 ```
 
-```{r}
-describeBy(seed_raw[, -c(8)], seed_raw$type)
-```
+Separating the plots by the type of the wheat seed, all the individual plots
+are symmetrical and resemble the shapes of normal distributions. Furthermore, 
+the irregularities in the previous plots can be explained by the shifts in the 
+distribution of the measurements by the type of wheat. For the grove_length case, 
+two of the types overlaps, while one is shifted, which resulted in the clear 
+bimodal shape before. Overall, for all of the variables plotted below, at least 
+one of the type can be separated well from the others. In all cases except for 
+grove_length, type 2 seeds sits in-between type 1 and 3, but only the peak of 
+the distribution is clearly separated from the others.
 
-```{r}
+```{r message=FALSE, error=FALSE}
 area_plot <- ggplot(seed_raw, aes(y=type, x=area, fill=type)) +
     geom_density_ridges(alpha=0.6, stat="binline", bins=20) +
     theme_ridges() +
@@ -87,7 +137,12 @@ grove_plot <- ggplot(seed_raw, aes(y=type, x=grove_length, fill=type)) +
 grid.arrange(area_plot, parimenter_plot, length_plot, width_plot, grove_plot)
 ```
 
-```{r}
+For the two normal looking plots in the plots not separated by types, the type 
+separated plots also appears to resemble a normal distribution. However, the shift 
+in distribution is minimal compared to the other variables. Thus, there were only one 
+peak in the original plots.
+
+```{r message=FALSE, error=FALSE}
 compact_plot <- ggplot(seed_raw, aes(y=type, x=compactness, fill=type)) +
     geom_density_ridges(alpha=0.6, stat="binline", bins=20) +
     theme_ridges() +
@@ -103,17 +158,40 @@ asymmetry_plot <- ggplot(seed_raw, aes(y=type, x=asymmetry, fill=type)) +
 grid.arrange(compact_plot, asymmetry_plot)
 ```
 
+Since the data are clearly not on the same unit, and most of the techniques are 
+benefited if the data are normalized to standard units, the original data was 
+scaled to standard units by their mean and standard deviation.
+
 ```{r}
 seed_scaled <- data.frame(seed_raw)
 seed_scaled[, 1:7] <- scale(seed_raw[, 1:7])
 ```
 
+## PCA Analysis
+
+PCA is a method where the data are projected to a subspace spanned by the 
+eigenvectors of the covariance matrix of the centered data. By using the eigenvectors, 
+the variance of the projected data along the direction of the eigenvectors is maximized, 
+and the variance along each eigenvector is equal to its associated eigenvalue. 
+Furthermore, the eigenvectors are orthogonal to each other, and the sum of the eigenvalues 
+is equal to the sum of the variances. Thus, PCA can be seen as a decomposition of 
+the variations in the dataset along orthogonal directions. In many cases, a large 
+percentage of the variations can be captured by the projection along a few directions. 
+Thus, it is useful as a technique to reduce the dimension of the dataset while 
+preserving information in the dataset.
+
+In this case, PCA is applied to the measurements of wheat kernels in order to 
+reduce dimensions. By reducing dimensions, the data could be better visualized, 
+and the performance of ML algorithms could be improved.
+
 ```{r}
 seed_pcs <- prcomp(seed_scaled[, 1:7], scale = FALSE)
 seed_pcs_sum <- summary(seed_pcs)
-print(as.data.frame(seed_pcs_sum$importance[, 1:7]))
-print(as.data.frame(seed_pcs$rotation))
 ```
+
+As shown below, the first 3 PCs captures 99% of the variations in the original dataset.
+Furthermore, the first PC captures 71.9% of the variations. Thus, the dimension of 
+the dataset could be reduced to 3 or 4 without losing much information.
 
 ```{r}
 fviz_eig(seed_pcs, addlabels=TRUE)
@@ -121,87 +199,135 @@ seed_pcs_dat <- data.frame(seed_pcs$x)
 seed_pcs_dat$type <- seed_scaled$type
 ```
 
+The variables are plotted together with respect to the first 2 PCS are shown below. 
+Additionally, the weight of the variables are listed for the first 3 PCs. From 
+the plot, grove_length, kernel_length, parimenter, area, and kernel_width are 
+correlated with each other around the first PC. On the other hand, compactness 
+and asymmetry are separated from the rest of the group going in different directions.
+This pattern extends to the 3rd PC as well, for the weight of the grove_length etc 
+are similar. But, the weight for compactness and asymmetry are both negative.
+
+```{r}
+fviz_pca_var(seed_pcs)
+print(as.data.frame(seed_pcs$rotation[, 1:3]))
+```
+
+The pairwise plot of the transformed data where the type of wheat shows signs of 
+separation is drawn below. The first PC shows the greatest separation where all 
+3 classes are distinct in the plot. For the rest of the PCs, the type 1 seeds are 
+somewhat distinct, but the rest are blended together. Additionally, the pairwise 
+plot for PC1 vs PC2 shows the greatest separation, where type 2 and 3 are separated 
+horizontally while type 1 is shifted below. For all of the types, the pairwise cluster 
+of points are elliptically shaped balls.
+
 ```{r}
 ggpairs(
   seed_pcs_dat,
   title = "Pairwise PC Plot",
-  columns = c(1, 2, 3),
+  columns = c(1, 2, 4, 5),
   upper = list(continuous = "points"),
   mapping = ggplot2::aes(color = type),
   legend = 1
 )
 ```
 
+## Cluster Analysis
 
+Due to the shape of the points in the PC plots, the KMean algorithm was chosen to 
+create clusters against the PCA transformed data. In KMean clustering, the number 
+of clusters is fixed, and the goal is to minimize the Euclidean distance between every point 
+in a cluster to the center of the cluster. In this case, the number of cluster is 
+chosen by looking at the sum of the squared distance between each point in a cluster 
+and the center of the cluster. After the 3rd cluster, the reduction in the total sum 
+across all clusters are not significant. Thus, 3 clusters are created.
 
 ```{r}
-fviz_nbclust(seed_pcs_dat[, 1:3], kmeans, method = "wss")
+fviz_nbclust(seed_pcs_dat[, c(1, 2, 4, 5)], kmeans, method = "wss")
 ```
+
+After computing the clusters, the points are plotted on the first 2 PCs, with 
+the type of wheat as well as the cluster number both labeled. In the plot, the clusters 
+closely match to the wheat type, suggesting that the most notably grouping of the 
+data points are indeed the type of wheat seed. 
 
 ```{r}
 k <- 3
 k_clusters <-
   kmeans(
-    seed_pcs_dat[, 1:3],
+    seed_pcs_dat[, c(1, 2, 4, 5)],
     centers = k,
     nstart = 25,
     iter.max = 1000
   )
 seed_pcs_cluster <- data.frame(seed_pcs_dat)
 seed_pcs_cluster$cluster <- as.factor(k_clusters$cluster)
+ggplot(seed_pcs_cluster, aes(x = PC1, y = PC2, color = type, shape = cluster)) +
+  geom_point(size = 1.5) + ggtitle("Cluster Type Plot")
 ```
 
-```{r}
-ggplot(seed_pcs_cluster, aes(x = PC1, y = PC2, color = type, shape = cluster)) +
-  geom_point(size = 1.5)
-```
+After normalizing the cluster number with the type number, the distribution 
+of types across clusters are plotted below. Each cluster is fairly homogeneous. 
+However, there are confusions between all three types in between clusters.
 
 ```{r}
 seed_pcs_cluster_renamed <- data.frame(seed_pcs_cluster)
 seed_pcs_cluster_renamed$cluster[seed_pcs_cluster$cluster == 1] <- 3
-seed_pcs_cluster_renamed$cluster[seed_pcs_cluster$cluster == 3] <- 1
+seed_pcs_cluster_renamed$cluster[seed_pcs_cluster$cluster == 3] <- 2
+seed_pcs_cluster_renamed$cluster[seed_pcs_cluster$cluster == 2] <- 1
 
 # Summarize results of clustering.
 ggplot(data = seed_pcs_cluster_renamed, aes(fill = type)) + aes(x = cluster) + 
   geom_bar() + xlab("Cluster") + ylab("Count") + ggtitle("Clusters with 3 PCs")
 ```
 
+The mean and standard deviation of the clusters with their corresponding types are 
+listed below. The clusters and types have almost identical mean and standard 
+deviation, which indicates that the distribution of the points on the partitions 
+created by KMeans is similar to the distribution of the points by type.
+
 ```{r}
 PC1_type_mean <-tapply(seed_pcs_cluster_renamed$PC1, seed_pcs_cluster_renamed$type, mean)
 PC2_type_mean <- tapply(seed_pcs_cluster_renamed$PC2, seed_pcs_cluster_renamed$type, mean)
-PC3_type_mean <- tapply(seed_pcs_cluster_renamed$PC3, seed_pcs_cluster_renamed$type, mean)
 PC1_type_stdev <-tapply(seed_pcs_cluster_renamed$PC1, seed_pcs_cluster_renamed$type, sd)
 PC2_type_stdev <- tapply(seed_pcs_cluster_renamed$PC2, seed_pcs_cluster_renamed$type, sd)
-PC3_type_stdev <- tapply(seed_pcs_cluster_renamed$PC3, seed_pcs_cluster_renamed$type, sd)
 PC1_cluster_mean <-tapply(seed_pcs_cluster_renamed$PC1, seed_pcs_cluster_renamed$cluster, mean)
 PC2_cluster_mean <- tapply(seed_pcs_cluster_renamed$PC2, seed_pcs_cluster_renamed$cluster, mean)
-PC3_cluster_mean <- tapply(seed_pcs_cluster_renamed$PC3, seed_pcs_cluster_renamed$cluster, mean)
 PC1_cluster_stdev <-tapply(seed_pcs_cluster_renamed$PC1, seed_pcs_cluster_renamed$cluster, sd)
 PC2_cluster_stdev <- tapply(seed_pcs_cluster_renamed$PC2, seed_pcs_cluster_renamed$cluster, sd)
-PC3_cluster_stdev <- tapply(seed_pcs_cluster_renamed$PC3, seed_pcs_cluster_renamed$cluster, sd)
 
 PC_cluster_summary <- rbind(PC1_type_mean, PC1_cluster_mean, PC2_type_mean, PC2_cluster_mean,
-                            PC3_type_mean, PC3_cluster_mean, PC1_type_stdev, PC1_cluster_stdev,
-                            PC2_type_stdev, PC2_cluster_stdev, PC3_type_stdev, PC3_cluster_stdev)
+                            PC1_type_stdev, PC1_cluster_stdev, PC2_type_stdev, PC2_cluster_stdev)
 PC_cluster_summary
 ```
 
-```{r}
-PC_type_summary <- rbind(PC1_type_mean, PC2_type_mean, PC3_type_mean,
-                         PC1_type_stdev, PC2_type_stdev, PC3_type_stdev)
-PC_type_summary
-```
+
+## Classification
+
+### Variable Selection
+
+LASSO is a regularized form of linear regression where the added cost is the absolute 
+weight of the coefficients. For multiclass classification problems, the output of the linear 
+model is the log likelihood ratio of a class against all other class. A notable property 
+of LASSO regression is that the coefficients could be set to 0 due to the added cost. 
+
+In this case, due to the zeroing property, LASSO is used to guide variable selection. 
+The final coefficients are shown below. In addition to PC1, PC2, PC4, PC5 discussed 
+before with respect to separation, PC6 had significant weight for type 2 wheats. 
+But, all other PCs have either zero weights or small weights. Thus, the PC1, PC2, 
+PC5, PC5, and PC6 will be used for prediction.
 
 ```{r}
 lasso_mat <- model.matrix(type~., seed_pcs_dat)[, -1]
 cv.lasso <- cv.glmnet(lasso_mat, seed_pcs_dat$type, family = "multinomial")
-plot(cv.lasso)
+coef(cv.lasso, cv.lasso$lambda.min)
 ```
 
-```{r}
-coef(cv.lasso, cv.lasso$lambda.1se)
-```
+### Training and Cross Validation
 
+The dataset is divided into a test set and a training set by a 75 to 25 split. 
+Furthermore, 10-fold cross validation would be performed on the training set to 
+indicate the efficiency of the model and to select hyper-parameters. Additionally, 
+PCA was performed on the training set.
 
 ```{r}
 train.control <- trainControl(method = "cv", number = 10)
@@ -224,6 +350,9 @@ head(adopted_train)
 head(train)
 ```
 
+The test set was also transformed with the PCs computed only on the training set, 
+since the models require the transformed data.
+
 ```{r}
 test_pcs <- predict(train_pcs, test)
 adopted_test <- data.frame(test_pcs[, 1:7])
@@ -232,38 +361,129 @@ head(test)
 head(adopted_test)
 ```
 
+### KNN
+
+KNN is a simple but effective method for classification. For each points to be 
+classified, the nearest K neighbors to the points would be found, and a vote would 
+be performed with the K neighbors to determine the class of the point.
+
+It is used as a baseline in this analysis since it is the most straightforward 
+method. The optimal K was 9, and the associated accuracy was 92.25%.
+
 ```{r}
-model.knn <- train(type~., data = adopted_train[, c(1, 2, 4, 5, 8)], method = "knn", trControl = train.control)
+model.knn <- train(type~., data = adopted_train[, c(1, 2, 4, 5, 6, 8)], method = "knn", trControl = train.control)
 
 print(model.knn)
 ```
 
+### QDA
+
+Quadratic Discriminant Analysis is a classical approach based on Bayesian probability. 
+It makes the assumption that each class was generated from a multivariate gaussian 
+distribution with different mean and covariance. Then, it computes the likelihood 
+for the point to be classified with the distribution of each class, and chooses the 
+class with the highest likelihood. Empirical bayes is usually used to estimate the 
+priors for the class, as well as the mean and covariance.
+
+In this case, the elliptical shape of the points and the success of KMean suggests 
+that the distribution may be approximated by a multivariate gaussian distribution. 
+Furthermore, the standard deviation of the first two PCs are clearly different, which 
+implies that QDA would be more fitting than LDA, which assumes the same variance 
+across classes.
+
+QDA was able to achieve an accuracy of 96.87% in the cross validation, which is 
+higher than the KNN result.
+
 ```{r}
-model.qda <- train(type~., data = adopted_train[, c(1, 2, 4, 5, 8)], method = "qda", trControl = train.control)
+model.qda <- train(type~., data = adopted_train[, c(1, 2, 4, 5, 6, 8)], method = "qda", trControl = train.control)
 
 print(model.qda)
 ```
 
-```{r}
-tunegrid=data.frame(C=c(seq(0.01, 2, length = 20), 10))
-# Train the model
-model.cvsvm <- train(type~., data = adopted_train[, c(1:5, 8)], method = "svmLinear",
-               trControl = train.control, tuneGrid = tunegrid)
-# Summarize the results
-model.cvsvm$results[model.rbfsvm$results$C == model.rbfsvm$bestTune$C[1] & model.rbfsvm$results$sigma == model.rbfsvm$bestTune$sigma[1], ]
-```
+### SVM
 
+The Support Vector Machine in its raw form finds a hyperplane that separates two 
+sets of points. The hyperplane maximizes the margin between the plane and the two 
+sets. In some cases, the sets are not linearly separable, so slack variables can 
+be introduced to allow for points that crosses the correct side of the plane.
+Finally, the margin itself can be replaced by a kernel function, which would 
+represent "similarity" between two vectors. In some cases, it can be interpreted 
+as projecting the points into a different space, and computing the distance. For 
+the multiclass case, for every pair of class, a SVM is trained, and the result is 
+the voting result of all the SVMs.
+
+The RBF kernel is chosen as the similarity measure in this case. Since RBF involves 
+the expoential function, it can be interpreted as a taylor series expansion,
+which can lead to a projection into a space with arbitrarily large dimension. Thus, 
+it is one of the most flexible kernel.
+
+With the RBF kernel, the accuracy on cross validation was 96.75%.
 
 ```{r}
 tunegrid_rbf <- expand.grid(C=c(seq(0.01, 2, length = 20), 10), sigma=c(seq(0.01, 2, length = 20), 10))
 # Train the model
-model.rbfsvm <- train(type~., data = adopted_train, method = "svmRadial",
+model.rbfsvm <- train(type~., data = adopted_train[, c(1, 2, 4, 5, 6, 8)], method = "svmRadial",
                trControl = train.control, tuneGrid = tunegrid_rbf)
 # Summarize the results
-model.rbfsvm$results[model.rbfsvm$results$C == model.rbfsvm$bestTune$C[1] & model.rbfsvm$results$sigma == model.rbfsvm$bestTune$sigma[1], ]
+model.rbfsvm$results[model.rbfsvm$results$C == model.rbfsvm$bestTune$C[1] & model.rbfsvm$results$sigma == model.rbfsvm$bestTune$sigma[1], c(1, 2, 3, 4)]
 ```
+
+In both cases, the models clearly out-performed KNN on cross validation. Furthermore, 
+both QDA and SVM had similar performance on cross validation.
+
+### QDA on Testing Set
+
+The QDA model trained on the entire training set was applied to the test set. 
+The model performed pretty well, with an accuracy of 98.11%, which is higher than 
+the accuracy in cross validation. Furthermore, as shown by the confusion matrix, 
+only 1 mistake was made.
 
 ```{r}
+predict_qda <- predict(model.qda, adopted_test)
+cm.qda <-
+  confusionMatrix(
+    factor(predict_qda),
+    factor(adopted_test$type),
+    dnn = c("Prediction", "Label"),
+  )
+cm.qda
 
+ggplot(as.data.frame(cm.qda$table),
+         aes(Label, Prediction, fill = Freq)) + 
+  geom_tile() + geom_text(aes(label = Freq)) + 
+  scale_fill_gradient(low = "white") + 
+  labs(x = "Label", y = "Prediction") + ggtitle("Confusion Matrix, Features")
 ```
+
+### SVM on Testing Set
+
+The fully trained SVM was applied to the test set. It achieved an accuracy of 
+96.23%, which is roughly the same as the accuracy in cross validation. Based on, 
+the confusion matrix, SVM only made 2 mistakes, with one being similar to the QDA. 
+
+```{r}
+predict_svm <- predict(model.rbfsvm, adopted_test)
+cm.svm <-
+  confusionMatrix(
+    factor(predict_svm),
+    factor(adopted_test$type),
+    dnn = c("Prediction", "Label"),
+  )
+cm.svm
+
+ggplot(as.data.frame(cm.svm$table),
+         aes(Label, Prediction, fill = Freq)) + 
+  geom_tile() + geom_text(aes(label = Freq)) + 
+  scale_fill_gradient(low = "white") + 
+  labs(x = "Label", y = "Prediction") + ggtitle("Confusion Matrix, Features")
+```
+
+## Discussion
+
+Both QDA and SVM are successful at predicting the type of wheat from the PCA transformed 
+dataset. On both the cross validation as well as test set, QDA performed slightly better 
+than SVM. Additionally, QDA can be more useful than SVM, since it provides a 
+complete distribution over the classes of wheat. Thus, it can be a good characterization 
+of the wheat types. Finally, the success of QDA suggests that the Gaussian EM 
+algorithm may also achieve a good clustering of the data points.
 
