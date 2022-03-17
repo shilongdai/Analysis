@@ -46,9 +46,9 @@ Exploratory data analysis were conducted to inspect the distribution of the vari
 Then, PCA was applied to reduce the dimension of the data. The result of PCA was
 used to do KMeans clustering using 3 clusters. It was found that the clusters closely 
 resembles the type of wheat. Finally, QDA and SVM were applied to predict the type 
-of wheat from the transformed data, with KNN as a baseline. The QDA achieved the
-best performance on both cross validation and the test set, with an accuracy of 
-0.969 and 0.981 respectively.
+of wheat from the data, with KNN as a baseline. Both achieved similar performance 
+on cross validation, with an accuracy of 95.6%. They also performed identically 
+on the test set with an accuracy of 98.11%, but the error in classification is different.
 
 ```{r message=FALSE, error=FALSE}
 seed_raw <- read.csv("Seed_Data.csv")
@@ -163,15 +163,6 @@ asymmetry_plot <- ggplot(seed_raw, aes(y=type, x=asymmetry, fill=type)) +
 grid.arrange(compact_plot, asymmetry_plot)
 ```
 
-Since the data are clearly not on the same unit, and most of the techniques are 
-benefited if the data are normalized to standard units, the original data was 
-scaled to standard units by their mean and standard deviation.
-
-```{r}
-seed_scaled <- data.frame(seed_raw)
-seed_scaled[, 1:7] <- scale(seed_raw[, 1:7])
-```
-
 ## PCA Analysis
 
 PCA is a method where the data are projected to a subspace spanned by the 
@@ -190,7 +181,7 @@ reduce dimensions. By reducing dimensions, the data could be better visualized,
 and the performance of ML algorithms could be improved.
 
 ```{r}
-seed_pcs <- prcomp(seed_scaled[, 1:7], scale = FALSE)
+seed_pcs <- prcomp(seed_raw[, 1:7], scale = TRUE)
 seed_pcs_sum <- summary(seed_pcs)
 ```
 
@@ -201,7 +192,7 @@ the dataset could be reduced to 3 or 4 without losing much information.
 ```{r}
 fviz_eig(seed_pcs, addlabels=TRUE)
 seed_pcs_dat <- data.frame(seed_pcs$x)
-seed_pcs_dat$type <- seed_scaled$type
+seed_pcs_dat$type <- seed_raw$type
 ```
 
 The variables are plotted together with respect to the first 2 PCS are shown below. 
@@ -286,9 +277,11 @@ ggplot(data = seed_pcs_cluster_renamed, aes(fill = type)) + aes(x = cluster) +
 ```
 
 The mean and standard deviation of the clusters with their corresponding types are 
-listed below. The clusters and types have similar mean and standard 
-deviation, which indicates that the distribution of the points on the partitions 
-created by KMeans is similar to the distribution of the points by type.
+listed below. Cluster 2, 3 and type 1, 2 have almost identical mean and standard deviation. 
+This suggests that the distribution between the clusters and the types are similar. 
+However, the mean and standard deviation of the first cluster is a little different 
+from type 0, which corresponds to the fact that it is intermixed with other types more 
+than the other clusters.
 
 ```{r}
 PC1_type_mean <-tapply(seed_pcs_cluster_renamed$PC1, seed_pcs_cluster_renamed$type, mean)
@@ -316,6 +309,7 @@ indicate the efficiency of the model and to select hyper-parameters. Additionall
 PCA was performed on the training set.
 
 ```{r}
+set.seed(97) 
 train.control <- trainControl(method = "cv", number = 10)
 train_size <- floor(0.75 * nrow(seed_raw))
 train_ind <- sample(seq_len(nrow(seed_raw)), size = train_size)
@@ -340,6 +334,7 @@ The test set was also transformed with the PCs computed only on the training set
 since the models require the transformed data.
 
 ```{r}
+set.seed(97) 
 test_pcs <- predict(train_pcs, test)
 adopted_test <- data.frame(test_pcs[, 1:7])
 adopted_test$type <- test$type
@@ -349,18 +344,46 @@ head(adopted_test)
 
 ## Variable Selection
 
+While the PCA results had good clustering and separation, it did not preserve the 
+normal-like shape very well. Thus, the original variables are going to be used for 
+QDA, where the normality assumption is central to the technique. However, PCs are 
+going to be used for the other methods, since it normalizes the data, leads to 
+dimension reduction, and removes correlation.
+
+### LASSO
+
 LASSO is a regularized form of linear regression where the added cost is the absolute 
 weight of the coefficients. For multiclass classification problems, the output of the linear 
 model is the log likelihood ratio of a class against all other class. A notable property 
 of LASSO regression is that the coefficients could be set to 0 due to the added cost. 
 
 In this case, due to the zeroing property, LASSO is used to guide variable selection. 
-The final coefficients are shown below. In addition to PC1, PC2, PC4, PC5 discussed 
-before with respect to separation, PC6 had significant weight for type 2 wheats. 
-But, all other PCs have either zero weights or small weights. Thus, the PC1, PC2, 
-PC5, PC5, and PC6 will be used for prediction.
+The train set is scaled to make interpreting the coefficients easier.
+In the LASSO coefficients, the area, kernel_length, asymmetry, and grove_length seems 
+to have notable weight. Area, compactness, and grove length are involved in different 
+classes. However, from the PCA analysis, the area is pretty correlated with the 
+kernel_length, and their plot shows similar separation. Furthermore, the weight of 
+kernel_length is greater than area. Asymmetry only appears for one class, and has 
+a small weight. Furthermore, the plot of the types are close together. Finally, 
+The rest of the variables are pretty correlated with each other. Thus, the final 
+set of variables for QDA will be kernel_length, compactness, grove_length.
 
 ```{r}
+set.seed(97) 
+train_scaled <- data.frame(scale(train[, 1:7]))
+train_scaled$type <- train$type
+lasso_mat <- model.matrix(type~., train_scaled)[, -1]
+cv.lasso <- cv.glmnet(lasso_mat, train_scaled$type, family = "multinomial")
+coef(cv.lasso, cv.lasso$lambda.min)
+```
+
+Similarly, LASSO is also applied to PCs. From the PC analysis earlier, PC1 and 2 
+had the best pairwise plot for separation. But, PC4 and 5 are relevant in the coefficients 
+for 2 classes, and their weights are large for type 0 wheat. So, they are also considered. 
+Thus, the final set of predictors for PCA transformed data are PC1, PC2, PC4, and PC5.
+
+```{r}
+set.seed(97) 
 lasso_mat <- model.matrix(type~., adopted_train)[, -1]
 cv.lasso <- cv.glmnet(lasso_mat, adopted_train$type, family = "multinomial")
 coef(cv.lasso, cv.lasso$lambda.min)
@@ -374,10 +397,11 @@ classified, the nearest K neighbors to the points would be found, and a vote wou
 be performed with the K neighbors to determine the class of the point.
 
 It is used as a baseline in this analysis since it is the most straightforward 
-method. The optimal K was 7, and the associated accuracy was 93.02%.
+method. The optimal K was 5, and the associated accuracy was 93.11%.
 
 ```{r}
-model.knn <- train(type~., data = adopted_train[, c(1, 2, 4, 5, 6, 8)], method = "knn", trControl = train.control)
+set.seed(97) 
+model.knn <- train(type~., data = adopted_train[, c(1, 2, 4, 8)], method = "knn", trControl = train.control)
 
 print(model.knn)
 ```
@@ -391,17 +415,20 @@ for the point to be classified with the distribution of each class, and chooses 
 class with the highest likelihood. Empirical bayes is usually used to estimate the 
 priors for the class, as well as the mean and covariance.
 
-In this case, the elliptical shape of the points and the success of KMean suggests 
-that the distribution may be approximated by a multivariate gaussian distribution. 
-Furthermore, the standard deviation of the first two PCs are clearly different, which 
-implies that QDA would be more fitting than LDA, which assumes the same variance 
-across classes.
+In this case, the standard deviation of the variables are clearly different across 
+class. So, QDA is preferred over LDA, which assumes uniform covariance across classes.
 
-QDA was able to achieve an accuracy of 94.25% in the cross validation, which is 
+```{r}
+describeBy(seed_raw[, -c(8)], seed_raw$type, fast=TRUE, range = FALSE)
+```
+
+
+QDA was able to achieve an accuracy of 95.62% in the cross validation, which is 
 higher than the KNN result.
 
 ```{r}
-model.qda <- train(type~., data = adopted_train[, c(1, 2, 4, 5, 6, 8)], method = "qda", trControl = train.control)
+set.seed(97) 
+model.qda <- train(type~., data = train[, c(3, 4, 7, 8)], method = "qda", trControl = train.control)
 
 print(model.qda)
 ```
@@ -423,23 +450,23 @@ the expoential function, it can be interpreted as a taylor series expansion,
 which can lead to a projection into a space with arbitrarily large dimension. Thus, 
 it is one of the most flexible kernel.
 
-With the RBF kernel, the accuracy on cross validation was 97.46%.
+With the RBF kernel, the accuracy on cross validation was 95.58%, which is similar 
+to QDA.
 
 ```{r}
+set.seed(97) 
 tunegrid_rbf <- expand.grid(C=c(seq(0.01, 2, length = 20), 10), sigma=c(seq(0.01, 2, length = 20), 10))
 # Train the model
-model.rbfsvm <- train(type~., data = adopted_train[, c(1, 2, 4, 5, 6, 8)], method = "svmRadial",
+model.rbfsvm <- train(type~., data = adopted_train[, c(1, 2, 4, 5, 8)], method = "svmRadial",
                trControl = train.control, tuneGrid = tunegrid_rbf)
 # Summarize the results
 model.rbfsvm$results[model.rbfsvm$results$C == model.rbfsvm$bestTune$C[1] & model.rbfsvm$results$sigma == model.rbfsvm$bestTune$sigma[1], c(1, 2, 3, 4)]
 ```
 
-In both cases, the models clearly out-performed KNN on cross validation. Furthermore, 
-both QDA and SVM had similar performance on cross validation.
 
 ## KNN on Testing Set
 
-KNN was able to achieve an accuracy of 96.23 on the test set, which was higher 
+KNN was able to achieve an accuracy of 94.34 on the test set, which was higher 
 than the cross validation result.
 
 ```{r}
@@ -465,14 +492,14 @@ ggplot(as.data.frame(cm.knn$table),
 The QDA model trained on the entire training set was applied to the test set. 
 The model performed pretty well, with an accuracy of 98.11%, which is higher than 
 the accuracy in cross validation. Furthermore, as shown by the confusion matrix, 
-only 1 mistake was made. Compared to KNN, it made 1 less mistake in the same category.
+only 1 mistake was made. 
 
 ```{r}
-predict_qda <- predict(model.qda, adopted_test)
+predict_qda <- predict(model.qda, test)
 cm.qda <-
   confusionMatrix(
     factor(predict_qda),
-    factor(adopted_test$type),
+    factor(test$type),
     dnn = c("Prediction", "Label"),
   )
 cm.qda
@@ -487,8 +514,9 @@ ggplot(as.data.frame(cm.qda$table),
 ## SVM on Testing Set
 
 The fully trained SVM was applied to the test set. It achieved an accuracy of 
-98.11%, which is roughly the same as the accuracy in cross validation. Based on, 
-the confusion matrix, SVM only made 1 mistake similar to the one made by QDA.
+98.11%, which is also greater than the accuracy in cross validation. Based on  
+the confusion matrix, SVM only made 1 mistake, but it's in a different category 
+than QDA.
 
 ```{r}
 predict_svm <- predict(model.rbfsvm, adopted_test)
@@ -510,9 +538,9 @@ ggplot(as.data.frame(cm.svm$table),
 # Discussion
 
 Both QDA and SVM are successful at predicting the type of wheat from the PCA transformed 
-dataset. SVM performed better in cross validation, but both performed equally on 
-the test set. In both cases, the performance was better than KNN.
-However, despite not performing as well as SVM on CV, QDA can be more useful than SVM, 
-since it provides a complete distribution over the classes of wheat. Thus, it can 
-be a good characterization of the wheat types.
+dataset. The two method performed similarly in both CV and the test set. In both cases, 
+the performance was better than KNN. The different error on the test set suggests that 
+the decision boundary may be different despite similar performance. Regardless, QDA can 
+be more useful than SVM, since it provides a complete distribution over the classes of 
+wheat. Thus, it can be a good characterization of the wheat types.
 
