@@ -11,6 +11,7 @@ knitr::opts_chunk$set(tidy.opts = list(width.cutoff = 60), tidy = TRUE)
 
 
 ```{r message=FALSE, error=FALSE}
+set.seed(97) 
 library(MASS)
 library(ggplot2)
 library(cluster)
@@ -22,7 +23,6 @@ library(gridExtra)
 library(GGally)
 library(glmnet)
 library(caret)
-set.seed(97) 
 ```
 
 # Overview
@@ -309,7 +309,6 @@ indicate the efficiency of the model and to select hyper-parameters. Additionall
 PCA was performed on the training set.
 
 ```{r}
-set.seed(97) 
 train.control <- trainControl(method = "cv", number = 10)
 train_size <- floor(0.75 * nrow(seed_raw))
 train_ind <- sample(seq_len(nrow(seed_raw)), size = train_size)
@@ -334,7 +333,6 @@ The test set was also transformed with the PCs computed only on the training set
 since the models require the transformed data.
 
 ```{r}
-set.seed(97) 
 test_pcs <- predict(train_pcs, test)
 adopted_test <- data.frame(test_pcs[, 1:7])
 adopted_test$type <- test$type
@@ -347,8 +345,7 @@ head(adopted_test)
 While the PCA results had good clustering and separation, it did not preserve the 
 normal-like shape very well. Thus, the original variables are going to be used for 
 QDA, where the normality assumption is central to the technique. However, PCs are 
-going to be used for the other methods, since it normalizes the data, leads to 
-dimension reduction, and removes correlation.
+going to be used for the other methods, since it normalizes the data and removes correlation.
 
 ### LASSO
 
@@ -359,17 +356,16 @@ of LASSO regression is that the coefficients could be set to 0 due to the added 
 
 In this case, due to the zeroing property, LASSO is used to guide variable selection. 
 The train set is scaled to make interpreting the coefficients easier.
-In the LASSO coefficients, the area, kernel_length, asymmetry, and grove_length seems 
-to have notable weight. Area, compactness, and grove length are involved in different 
-classes. However, from the PCA analysis, the area is pretty correlated with the 
-kernel_length, and their plot shows similar separation. Furthermore, the weight of 
-kernel_length is greater than area. Asymmetry only appears for one class, and has 
-a small weight. Furthermore, the plot of the types are close together. Finally, 
-The rest of the variables are pretty correlated with each other. Thus, the final 
-set of variables for QDA will be kernel_length, compactness, grove_length.
+In the LASSO coefficients, the area, kernel_length, kernel_width, asymmetry, and 
+grove_length seems to have notable weight. Asymmetry and grove length are involved 
+in different classes. However, from the PCA analysis, the area and kernel_width are 
+pretty correlated with the kernel_length, and their plot shows similar separation. 
+Furthermore, the weight of kernel_length is greater than area or kernel_width. Asymmetry 
+did not show great separation and had small weight in LASSO, so it would not be added. 
+Finally, the rest of the variables are zeroed and LASSO, and are correlated from PCA. 
+Thus, the final set of variables for QDA will be kernel_length and grove_length.
 
 ```{r message=FALSE, error=FALSE, warning=FALSE}
-set.seed(97) 
 train_scaled <- data.frame(scale(train[, 1:7]))
 train_scaled$type <- train$type
 lasso_mat <- model.matrix(type~., train_scaled)[, -1]
@@ -378,12 +374,11 @@ coef(cv.lasso, cv.lasso$lambda.min)
 ```
 
 Similarly, LASSO is also applied to PCs. From the PC analysis earlier, PC1 and 2 
-had the best pairwise plot for separation. But, PC4 and 5 are relevant in the coefficients 
-for 2 classes, and their weights are large for type 0 wheat. So, they are also considered. 
-Thus, the final set of predictors for PCA transformed data are PC1, PC2, PC4, and PC5.
+had the best pairwise plot for separation. But, the weights for PC4 and 5 are large 
+for type 0 wheat. So, they are also considered. Thus, the final set of predictors 
+for PCA transformed data are PC1, PC2, PC4, and PC5.
 
 ```{r}
-set.seed(97) 
 lasso_mat <- model.matrix(type~., adopted_train)[, -1]
 cv.lasso <- cv.glmnet(lasso_mat, adopted_train$type, family = "multinomial")
 coef(cv.lasso, cv.lasso$lambda.min)
@@ -397,11 +392,10 @@ classified, the nearest K neighbors to the points would be found, and a vote wou
 be performed with the K neighbors to determine the class of the point.
 
 It is used as a baseline in this analysis since it is the most straightforward 
-method. The optimal K was 5, and the associated accuracy was 93.11%.
+method. The optimal K was 9, and the associated accuracy was 94.16%.
 
 ```{r}
-set.seed(97) 
-model.knn <- train(type~., data = adopted_train[, c(1, 2, 4, 8)], method = "knn", trControl = train.control)
+model.knn <- train(type~., data = adopted_train[, c(1, 2, 4, 5, 8)], method = "knn", trControl = train.control)
 
 print(model.knn)
 ```
@@ -423,12 +417,11 @@ describeBy(seed_raw[, -c(8)], seed_raw$type, fast=TRUE, range = FALSE)
 ```
 
 
-QDA was able to achieve an accuracy of 95.62% in the cross validation, which is 
+QDA was able to achieve an accuracy of 97.53% in the cross validation, which is 
 higher than the KNN result.
 
 ```{r}
-set.seed(97) 
-model.qda <- train(type~., data = train[, c(3, 4, 7, 8)], method = "qda", trControl = train.control)
+model.qda <- train(type~., data = train[, c(4, 7, 8)], method = "qda", trControl = train.control)
 
 print(model.qda)
 ```
@@ -450,11 +443,10 @@ the expoential function, it can be interpreted as a taylor series expansion,
 which can lead to a projection into a space with arbitrarily large dimension. Thus, 
 it is one of the most flexible kernel.
 
-With the RBF kernel, the accuracy on cross validation was 95.58%, which is similar 
-to QDA.
+With the RBF kernel, the accuracy on cross validation was 96.25%, which is only a little 
+smaller than QDA.
 
 ```{r}
-set.seed(97) 
 tunegrid_rbf <- expand.grid(C=c(seq(0.01, 2, length = 20), 10), sigma=c(seq(0.01, 2, length = 20), 10))
 # Train the model
 model.rbfsvm <- train(type~., data = adopted_train[, c(1, 2, 4, 5, 8)], method = "svmRadial",
@@ -466,8 +458,8 @@ model.rbfsvm$results[model.rbfsvm$results$C == model.rbfsvm$bestTune$C[1] & mode
 
 ## KNN on Testing Set
 
-KNN was able to achieve an accuracy of 94.34 on the test set, which was higher 
-than the cross validation result.
+KNN was able to achieve an accuracy of 92.45 on the test set, which was lower than 
+the cross validation result.
 
 ```{r}
 predict_knn <- predict(model.knn, adopted_test)
@@ -490,9 +482,9 @@ ggplot(as.data.frame(cm.knn$table),
 ## QDA on Testing Set
 
 The QDA model trained on the entire training set was applied to the test set. 
-The model performed pretty well, with an accuracy of 98.11%, which is higher than 
+The model performed well, with an accuracy of 94.34%, which is lower than 
 the accuracy in cross validation. Furthermore, as shown by the confusion matrix, 
-only 1 mistake was made. 
+3 mistakes were made in the test set.
 
 ```{r}
 predict_qda <- predict(model.qda, test)
@@ -515,8 +507,8 @@ ggplot(as.data.frame(cm.qda$table),
 
 The fully trained SVM was applied to the test set. It achieved an accuracy of 
 98.11%, which is also greater than the accuracy in cross validation. Based on  
-the confusion matrix, SVM only made 1 mistake, but it's in a different category 
-than QDA.
+the confusion matrix, SVM only made 1 mistake, and it is similar to one of the QDA 
+errors.
 
 ```{r}
 predict_svm <- predict(model.rbfsvm, adopted_test)
@@ -538,9 +530,9 @@ ggplot(as.data.frame(cm.svm$table),
 # Discussion
 
 Both QDA and SVM are successful at predicting the type of wheat from the PCA transformed 
-dataset. The two method performed similarly in both CV and the test set. In both cases, 
-the performance was better than KNN. The different error on the test set suggests that 
-the decision boundary may be different despite similar performance. Regardless, QDA can 
+dataset. In both cases, they outperformed KNN. While QDA performed the best on CV, 
+SVM was able to achieve a higher accuracy in the test set. Regardless, they are both 
+viable for classifying wheat types. However, from a interpretation perspective, QDA can 
 be more useful than SVM, since it provides a complete distribution over the classes of 
 wheat. Thus, it can be a good characterization of the wheat types.
 
