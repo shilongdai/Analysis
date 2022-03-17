@@ -368,7 +368,7 @@ a small weight. Furthermore, the plot of the types are close together. Finally,
 The rest of the variables are pretty correlated with each other. Thus, the final 
 set of variables for QDA will be kernel_length, compactness, grove_length.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 set.seed(97) 
 train_scaled <- data.frame(scale(train[, 1:7]))
 train_scaled$type <- train$type
