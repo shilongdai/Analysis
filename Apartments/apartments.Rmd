@@ -10,7 +10,7 @@ knitr::opts_chunk$set(tidy.opts = list(width.cutoff = 60), tidy = TRUE)
 ```
 
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 set.seed(97) 
 library(MASS)
 library(ggplot2)
@@ -91,18 +91,17 @@ The data is loaded from the csv file, and only the variables listed above are re
 Since the main interest would be to predict the rent, any units without rent listed 
 are discarded.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 apartments_raw <- read.csv("./compile.csv")
 apartments_raw_small <- apartments_raw[, c(2:54)]
 apartments_raw_small <- apartments_raw_small[!is.na(apartments_raw_small$rent),]
 apartments_raw_small <- apartments_raw_small[,order(colnames(apartments_raw_small))]
-head(apartments_raw_small)
 ```
 
 The latitude and longitude information for each apartment is also retrieved, and 
 added to the scraped data.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 apartment.geo <- read.csv("geo.csv")
 apartment.geo$full_addr <- apartment.geo$address
 apartment.geo$address <- str_split_fixed(apartment.geo$full_addr, ", ", 2)[, 1]
@@ -118,7 +117,7 @@ There seems to be a number of units with rents >= 10k dollars. Consequently, the
 plot was scaled so that the bulk of the apartments are squeezed at the bottom, while 
 the outliers are highlighted on the top.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 ggplot(apartments_raw_small, aes(y=rent)) + geom_boxplot(fill="slateblue", alpha=0.2)
 ```
 
@@ -126,7 +125,7 @@ With the IQR method, there are a total of 889 outliers in the dataset. It's a ti
 amount compared to the whole dataset of around 17k apartments, but some of them may 
 still be in the scope of interest.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 out.rent <- boxplot.stats(apartments_raw_small$rent)$out
 out.rent.ind <- which(apartments_raw_small$rent %in% c(out.rent))
 length(out.rent)
@@ -134,14 +133,15 @@ length(out.rent)
 The histogram of the outliers shows that the majority of outliers are under 10k in 
 rents, and only a small percentage of the units are over 20k in rents.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 histogram(out.rent)
 ```
 A closer look at the the apartments with rent >= 20k shows that four out of five 
 of them are from 368 Grand by Onni.
 
-```{r message=FALSE, error=FALSE}
-apartments_raw_small[apartments_raw_small$rent >= 20000, c("name", "rent", "baths", "beds", "sqft")]
+```{r message=FALSE, error=FALSE, warning=FALSE}
+apartments_raw_small[apartments_raw_small$rent >= 20000, 
+                     c("name", "rent", "baths", "beds", "sqft")]
 ```
 
 However, the median the of units at 369 Grand by Onni us only around 5k. Furthermore, 
@@ -151,8 +151,9 @@ the units above 20k are some sort of special units in the complex. Since the pur
 of the analysis is for "mass-produced" apartments for general residence, those 
 special units are out of the scope of the analysis, so they can be discarded.
 
-```{r message=FALSE, error=FALSE}
-describe(apartments_raw_small[apartments_raw_small$name == "369 Grand by Onni", c("rent")])
+```{r message=FALSE, error=FALSE, warning=FALSE}
+describe(apartments_raw_small[apartments_raw_small$name == "369 Grand by Onni", 
+                              c("rent")])
 ```
 
 In order to discard the special units from the complexes, the apartment units are compared 
@@ -166,14 +167,15 @@ $$Score = |X - Median|/MAD$$
 where X is the rent of the outlier unit. If the Score is greater than 3, then the unit 
 is considered to be a special unit and discarded.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 apartment_comp_df <- apartments_raw_small[, c("address", "rent")]
 out.stat.df <- as.data.frame(with(apartment_comp_df, tapply(rent, address, median)))
 out.stat.df$mad <- with(apartment_comp_df, tapply(rent, address, mad))
 colnames(out.stat.df) <- c("median", "mad")
 out.stat.df$address <- rownames(out.stat.df)
 apartment_comp_df <- merge(apartment_comp_df, out.stat.df, by="address")
-apartment_comp_df$score <- (apartment_comp_df$rent - apartment_comp_df$median) / apartment_comp_df$mad
+apartment_comp_df$score <- (apartment_comp_df$rent - apartment_comp_df$median) / 
+  apartment_comp_df$mad
 apartment_comp_df[is.na(apartment_comp_df$score), "score"] <- 0
 removal.score.ind <- abs(apartment_comp_df$score) >= 3
 apartment_comp_df <- apartment_comp_df[!removal.score.ind, ]
@@ -188,10 +190,10 @@ itself at around \$7000 per month, so it was selected as the cutoff point for th
 outliers. Intuitively, it is also high enough to include the apartments that most people 
 would be willing to afford.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 bw_rent <- 2 * IQR(apartments_raw_small$rent) / length(apartments_raw_small$rent)^(1/3)
 ggplot(apartment_comp_df, aes(x=rent)) + geom_histogram(bins=bw_rent, fill="#69b3a2", 
-                                                           color="#e9ecef", alpha=0.9)
+                                                        color="#e9ecef", alpha=0.9)
 apartments_raw_small <- apartments_raw_small[!removal.score.ind,]
 apartments_raw_small <- apartments_raw_small[apartments_raw_small$rent < 7000, ]
 ```
@@ -202,11 +204,13 @@ However, the distribution also seems to be multi-modal, with the shape of the hi
 being far from smooth. Based on the skewness, a log transformation was applied, which 
 made the plot more symmetrical, but the different peaks are preserved.
 
-```{r message=FALSE, error=FALSE}
-rent.plot <- ggplot(apartments_raw_small, aes(x=rent)) + geom_histogram(bins=bw_rent, fill="#69b3a2", 
-                                                           color="#e9ecef", alpha=0.9)
-rent.logplot <- ggplot(apartments_raw_small, aes(x=log(rent))) + geom_histogram(bins=bw_rent, fill="#69b3a2", 
-                                                           color="#e9ecef", alpha=0.9)
+```{r message=FALSE, error=FALSE, warning=FALSE}
+rent.plot <- ggplot(apartments_raw_small, aes(x=rent)) + 
+  geom_histogram(bins=bw_rent, fill="#69b3a2", 
+  color="#e9ecef", alpha=0.9)
+rent.logplot <- ggplot(apartments_raw_small, aes(x=log(rent))) + 
+  geom_histogram(bins=bw_rent, fill="#69b3a2", 
+  color="#e9ecef", alpha=0.9)
 grid.arrange(rent.plot, rent.logplot)
 ```
 
@@ -217,7 +221,7 @@ the median. The standard deviation of 1054.35 is higher than the mean absolute d
 of 957.76, probably due to influences from the tail of the data. Finally, the skew is 
 positive at 1.2, which implies that the distribution is somewhat skewed to the right.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 describe(apartments_raw_small[,c("rent")])
 ```
 
@@ -227,8 +231,9 @@ The sqft is roughly symmetrically distributed, with the center around 800. Howev
 there is a group of larger apartments at around 2500 sqft, and a few apartment at 10k sqft 
 in the raw data.
 
-```{r message=FALSE, error=FALSE}
-bw_sqft <- 2 * IQR(apartments_raw_small$sqft, na.rm=TRUE) / length(apartments_raw_small$sqft)^(1/3)
+```{r message=FALSE, error=FALSE, warning=FALSE}
+bw_sqft <- 2 * IQR(apartments_raw_small$sqft, na.rm=TRUE) / 
+  length(apartments_raw_small$sqft)^(1/3)
 ggplot(apartments_raw_small, aes(x=sqft)) + geom_histogram(bins=bw_sqft, fill="#69b3a2", 
                                                            color="#e9ecef", alpha=0.9)
 ```
@@ -237,8 +242,9 @@ A closer inspection of the website revealed that it's very unlikely for the apar
 with roughly 10k sqft listed to be actually that big, so the sqft is set to NaN. Furthermore, 
 there is an apartment model with a data entry error, so it is also corrected.
 
-```{r message=FALSE, error=FALSE}
-apartments_raw_small$sqft <- ifelse(apartments_raw_small$sqft == 9999, NaN, apartments_raw_small$sqft)
+```{r message=FALSE, error=FALSE, warning=FALSE}
+apartments_raw_small$sqft <- ifelse(apartments_raw_small$sqft == 9999, NaN, 
+                                    apartments_raw_small$sqft)
 apartments_raw_small[apartments_raw_small$address == "2834 W Warren Blvd", c("address", "sqft")]
 apartments_raw_small["2471", "sqft"] <- 1710
 ```
@@ -248,7 +254,7 @@ that is highly unlikely since they also have bathrooms and living room. Thus, 20
 size of a small college dorm room) was picked as the cutoff line, and the column was 
 reset for all the units with <= 200 sqft areas.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 describe(apartments_raw_small$sqft, fast = T)
 apartments_raw_small$sqft <- ifelse(apartments_raw_small$sqft <= 200, NaN, apartments_raw_small$sqft)
 ```
@@ -257,12 +263,15 @@ The sqft became skewed after the potentially incorrect data is removed. A log tr
 can be applied to make it symmetrical. However, it is multimodal with 2-4 potential 
 peaks in the distribution.
 
-```{r message=FALSE, error=FALSE}
-bw_sqft <- 2 * IQR(apartments_raw_small$sqft, na.rm=TRUE) / length(apartments_raw_small$sqft)^(1/3)
-sqft.plot <- ggplot(apartments_raw_small, aes(x=sqft)) + geom_histogram(bins=bw_sqft, fill="#69b3a2", 
-                                                           color="#e9ecef", alpha=0.9)
-sqft.plog <- ggplot(apartments_raw_small, aes(x=log(sqft))) + geom_histogram(bins=bw_sqft, fill="#69b3a2", 
-                                                           color="#e9ecef", alpha=0.9)
+```{r message=FALSE, error=FALSE, warning=FALSE}
+bw_sqft <- 2 * IQR(apartments_raw_small$sqft, na.rm=TRUE) / 
+  length(apartments_raw_small$sqft)^(1/3)
+sqft.plot <- ggplot(apartments_raw_small, aes(x=sqft)) + 
+  geom_histogram(bins=bw_sqft, fill="#69b3a2", 
+  color="#e9ecef", alpha=0.9)
+sqft.plog <- ggplot(apartments_raw_small, aes(x=log(sqft))) + 
+  geom_histogram(bins=bw_sqft, fill="#69b3a2", 
+  color="#e9ecef", alpha=0.9)
 grid.arrange(sqft.plot, sqft.plog)
 ```
 
@@ -273,7 +282,7 @@ lot. It is clearly an error in the input, and the fee has been corrected to $100
 After the correction, the distribution of fee looked much more reasonable, with most 
 apartment charging nothing for parking.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 apartments_raw_small[apartments_raw_small$lot.fee >= 500, c("address", "lot.fee", "rent")]
 apartments_raw_small["1970", "lot.fee"] <- 100
 ggplot(apartments_raw_small, aes(x=lot.fee)) + geom_histogram(bins=30, fill="#69b3a2", 
@@ -286,7 +295,7 @@ A frequency table of street.fee shows that essentially all of the apartments lis
 doesn't charge for parking on the street. There are only a handful of apartments that charges 
 for street parking. Thus, the column doesn't add much to the data, so it is dropped.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 table(apartments_raw_small$street.fee)
 apartments_raw_small <- apartments_raw_small[, -which(names(apartments_raw_small) 
                                                       %in% c("street.fee"))]
@@ -304,7 +313,7 @@ distinct soundscapes. Finally, roughly 750 apartments had perfect bike scores, a
 rest are distributed with a skew to the left. There are also a few score range with 
 high amount of apartments as compared to the other ranges.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 transit.plot <- ggplot(apartments_raw_small, aes(x=transit.score)) + 
   geom_histogram(bins=50, fill="#69b3a2", color="#e9ecef", alpha=0.9)
 walk.plot <- ggplot(apartments_raw_small, aes(x=walk.score)) + 
@@ -325,7 +334,7 @@ scores. They are minor compared to the total of 17k apartments. Furthermore, the
 values indicate an error on the webpage, since the score should be provided to all 
 the apartments automatically. Thus, those apartments are dropped.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 nrow(apartments_raw_small[is.na(apartments_raw_small$sqft),])
 nrow(apartments_raw_small[is.na(apartments_raw_small$walk.score),])
 nrow(apartments_raw_small[is.na(apartments_raw_small$bike.score),])
@@ -343,7 +352,7 @@ Some of the potential categorical variables are converted to characters temporar
 to have more flexibility. The missing values in pet.allowed are renamed to "unknown."
 Finally, the logical variables are typed properly as logical binary variables.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 apartments_raw_small$zip = as.factor(apartments_raw_small$zip)
 apartments_raw_small$neighborhood = as.character(apartments_raw_small$neighborhood)
 apartments_raw_small$beds = as.character(apartments_raw_small$beds)
@@ -378,7 +387,7 @@ In terms of bathrooms, almost 75% of the apartments only have 1 bathroom. The re
 the apartments essentially have 2 bathrooms. Not much apartments in Chicago has half-bathrooms, 
 but the most common arrangement of half-bathrooms seems to be 1 full bath + 1 half bath.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 plot_as_percentage <- function(df, col, varname="", title="") {
   freq_df <- data.frame(table(df[, c(col)]))
   freq_df$Freq <- freq_df$Freq / sum(freq_df$Freq)
@@ -414,7 +423,7 @@ entry error, so they are discarded as well. Finally, there are only 2 apartments
 4.5 bathrooms, so they are too small to be a category on their own. Thus, they can be 
 merged with the apartments with 4 bathrooms.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 CrossTable(apartments_raw_small$beds)
 CrossTable(apartments_raw_small$baths)
 
@@ -429,7 +438,7 @@ where the number of bathrooms are greater than the number of bedrooms. For examp
 there are 4 studio apartments with 2 bathrooms. Thus, it prompts a closer look 
 to determine whether the entries are correct.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 apartments_raw_small$beds <- as.numeric(apartments_raw_small$beds)
 apartments_raw_small$baths <- as.numeric(apartments_raw_small$baths)
 
@@ -446,7 +455,7 @@ bathrooms vs unexpected is shown below. The expected group is centered at around
 there are a few apartments in the 500 sqft range, and a few apartments that are clearly 
 larger than most.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 studio <- apartments_raw_small[beds == 0, ]
 studio$expected <- T
 studio[studio$baths >= 1.5, "expected"] <- F
@@ -459,7 +468,7 @@ A look at the smaller unexpected apartments shows that all except for 8701 defin
 only has 1 bathroom. A look at the picture of 8701 shows that it only has 1 baths. Thus, 
 the bathrooms are corrected to 1.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 studio.unexpected <- studio[!studio$expected, ]
 studio.unexpected[studio.unexpected$sqft <= 800, c("address", "rent", "sqft", "baths")]
 row.update <- rownames(studio.unexpected[studio.unexpected$sqft <= 800,])
@@ -472,7 +481,7 @@ In the 1 bedroom case, the unexpected units are clearly shifted to the left from
 the expected unit, and both had similar shape. In either case, there are a few 
 units that are notably bigger than the rest.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 one_bed <- apartments_raw_small[apartments_raw_small$beds == 1, ]
 one_bed$expected <- T
 one_bed[one_bed$baths >= 1.5, "expected"] <- F
@@ -485,7 +494,7 @@ It is calculated that the mean of the expected unit is centered at 728.67 sqft w
 the unexpected unit is centered at 987.62. The expected units have a standard deviation 
 of 162.33 while the unexpected ones have a higher standard deviation of 239.11.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 describeBy(sqft~expected, data=one_bed, fast=T)
 ```
 
@@ -493,7 +502,7 @@ A look at the unexpected units with sqft below the mean of the expected units sh
 a few candidates for correction. The floor plan was looked up, and the bathroom number 
 of 13486 and 13499 is corrected to 1.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 one_bed.unexpected <- one_bed[!one_bed$expected & !is.na(one_bed$sqft), ]
 one_bed.unexpected[one_bed.unexpected$sqft <= 750, c("name", "rent", "sqft", "baths")]
 apartments_raw_small[c("13486", "13499"), "baths"] <- 1
@@ -503,7 +512,7 @@ Additionally, the notably large units are selected below as well. After a few se
 it turned out that 15693 is a room in the whole building, but the sqft of the entire 
 building is listed on the website. Thus, the sqft is reset to NaN.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 one_bed[!is.na(one_bed$sqft) & one_bed$sqft >= 2000,  c("name", "rent", "sqft", "baths")]
 apartments_raw_small[which(rownames(apartments_raw_small) 
                      %in% c("15693")), "sqft"] <- NaN
@@ -517,7 +526,7 @@ units sit at around 1500 sqft. There is a group of unexpected units with sqft at
 center of the expected units. Furthermore, there's also 2 clusters of unexpected units 
 that's clearly larger than the rest.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 two_bed <- apartments_raw_small[apartments_raw_small$beds == 2, ]
 two_bed$expected <- T
 two_bed[two_bed$baths >= 2.5, ]$expected <- F
@@ -529,7 +538,7 @@ ggplot(two_bed, aes(x=sqft, fill=expected, group=expected)) +
 An inspection of the floor plan online revealed that the smaller units with 2.5 baths 
 actually do have 2.5 baths, so no correction is needed.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 two_bed.unexpected <- two_bed[!two_bed$expected & !is.na(two_bed$sqft), ]
 two_bed.unexpected[two_bed.unexpected$sqft <= 1100, c("name", "rent", "sqft", "baths")]
 ```
@@ -538,10 +547,11 @@ For the larger units, a search revealed that 15845, 15851, and 1090 are the spec
 units offered in the apartments. They are not the usual units that a renter would 
 most likely rent in the building. Thus, they are discarded.
 
-```{r message=FALSE, error=FALSE}
-two_bed[!is.na(two_bed$sqft) & two_bed$sqft >= 2600, c("name", "rent", "sqft", "baths")]
+```{r message=FALSE, error=FALSE, warning=FALSE}
+two_bed[!is.na(two_bed$sqft) & two_bed$sqft >= 2600, 
+        c("name", "rent", "sqft", "baths")]
 apartments_raw_small <- apartments_raw_small[-which(rownames(apartments_raw_small) 
-                                                             %in% c("15845", "15851", "1090")), ]
+                                             %in% c("15845", "15851", "1090")), ]
 ```
 
 
@@ -554,7 +564,7 @@ units around 1500 sqft, which seems to be the center of the expected units. The 
 unexpected units are clearly larger than most of the expected units. However, there's 
 1 cluster of expected units that's larger than the rest.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 three_bed <- apartments_raw_small[apartments_raw_small$beds == 3, ]
 three_bed$expected <- T
 three_bed[three_bed$baths >= 3.5, "expected"] <- F
@@ -566,17 +576,19 @@ ggplot(three_bed, aes(x=sqft, fill=expected, group=expected)) +
 A search of the floor plan revealed that the small unexpected unit does indeed has 3.5 
 bathrooms, so no correction is needed.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 three_bed.unexpected <- three_bed[!three_bed$expected & !is.na(three_bed$sqft), ]
-three_bed.unexpected[three_bed.unexpected$sqft <= 1600, c("name", "rent", "sqft", "baths")]
+three_bed.unexpected[three_bed.unexpected$sqft <= 1600, 
+                     c("name", "rent", "sqft", "baths")]
 ```
 
 A search revealed that the sqft for 7846 is actually the total sqft of the building. 
 Since no other information was able to be founded regarding the specific room rented, 
 the sqft is reset back to NaN.
 
-```{r message=FALSE, error=FALSE}
-three_bed[!is.na(three_bed$sqft) & three_bed$sqft > 3000, c("name", "rent", "sqft", "baths")]
+```{r message=FALSE, error=FALSE, warning=FALSE}
+three_bed[!is.na(three_bed$sqft) & three_bed$sqft > 3000, 
+          c("name", "rent", "sqft", "baths")]
 apartments_raw_small[which(rownames(apartments_raw_small) 
                      %in% c("7846")), "sqft"] <- NaN
 ```
@@ -590,7 +602,7 @@ there did not seem to be any significant outliers as far as sqft is concerned. T
 for 4 bedroom units seems to be around 2000 sqft. There is a small 4 bedroom apartment isolated 
 from the rest, and a cluster of larger sized apartments at around 3600 sqft.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 four_bed <- apartments_raw_small[apartments_raw_small$beds == 4, ]
 ggplot(four_bed, aes(x=sqft)) + 
   geom_histogram(aes(y=..density..), bins=30, fill="#69b3a2", color="#e9ecef", alpha=0.9)
@@ -599,8 +611,9 @@ ggplot(four_bed, aes(x=sqft)) +
 A search of the small apartment revealed that it's a small building with 4 bedroom, 
 so no correction is required.
 
-```{r message=FALSE, error=FALSE}
-four_bed[!is.na(four_bed$sqft) & four_bed$sqft <= 800, c("name", "rent", "sqft", "baths")]
+```{r message=FALSE, error=FALSE, warning=FALSE}
+four_bed[!is.na(four_bed$sqft) & four_bed$sqft <= 800, 
+         c("name", "rent", "sqft", "baths")]
 ```
 
 ### Categorical Beds & Baths
@@ -608,13 +621,14 @@ four_bed[!is.na(four_bed$sqft) & four_bed$sqft <= 800, c("name", "rent", "sqft",
 A categorical version of the beds and baths variables is created for regression later. 
 The finalized baths/beds are also plotted below.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 apartments_raw_small$bed_count <- as.character(apartments_raw_small$beds)
 apartments_raw_small[apartments_raw_small$beds == 0, c("bed_count")] <- "studio"
 apartments_raw_small$bed_count <- as.factor(apartments_raw_small$bed_count)
 apartments_raw_small$bath_count <- as.factor(apartments_raw_small$baths)
 
-bed.bath.freq <- data.frame(table(apartments_raw_small$bed_count, apartments_raw_small$bath_count))
+bed.bath.freq <- data.frame(table(apartments_raw_small$bed_count, 
+                                  apartments_raw_small$bath_count))
 colnames(bed.bath.freq) <- c("Beds", "Baths", "Freq")
 ggplot(bed.bath.freq, aes(fill=Baths, y=Freq, x=Beds)) + 
     geom_bar(position="stack", stat="identity")
@@ -629,7 +643,7 @@ The proportions of apartments by pet policy is plotted below. Almost 70% of the
 apartments allow pets, while approx 15% did not post a pet policy, or indicated that 
 the pet policy is negotiable.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 plot_as_percentage(apartments_raw_small, "pet.allowed")
 ```
 
@@ -638,7 +652,7 @@ plot_as_percentage(apartments_raw_small, "pet.allowed")
 The proportion of apartments by parking is plotted. Almost 70% of the apartments 
 has parking. 
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 plot_as_percentage(apartments_raw_small, "has.parking")
 ```
 
@@ -646,7 +660,7 @@ The apartments can also be broken down by specific parking type. Of the apartmen
 with parking, approx 50% has lot or garage. About 25% of the apartments has a 
 street parking arrangement. Finally, the least popular option is the covered parking lot.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 lot_plot <- plot_as_percentage(apartments_raw_small[apartments_raw_small$has.parking, ], 
                                "has.lot")
 garage_plot <- plot_as_percentage(apartments_raw_small[apartments_raw_small$has.parking, ], 
@@ -669,14 +683,18 @@ just 1 school. The same can be said for the private school version. Thus, 2 cate
 variables are created to simply indicate whether an apartment has an elementary school 
 nearby.
 
-```{r message=FALSE, error=FALSE}
-pub.elementary.plot <- plot_as_percentage(apartments_raw_small, "Public.Elementary.School",
+```{r message=FALSE, error=FALSE, warning=FALSE}
+pub.elementary.plot <- plot_as_percentage(apartments_raw_small, 
+                                          "Public.Elementary.School",
                                           "Count", "Public Elementary School")
-priv.elementary.plot <- plot_as_percentage(apartments_raw_small, "Private.Elementary.School",
+priv.elementary.plot <- plot_as_percentage(apartments_raw_small, 
+                                           "Private.Elementary.School",
                                            "Count", "Private Elementary School")
 grid.arrange(pub.elementary.plot, priv.elementary.plot, ncol=2)
-apartments_raw_small$has.pub.elementary <- apartments_raw_small$Public.Elementary.School >= 1
-apartments_raw_small$has.priv.elementary <- apartments_raw_small$Private.Elementary.School >= 1
+apartments_raw_small$has.pub.elementary <- 
+  apartments_raw_small$Public.Elementary.School >= 1
+apartments_raw_small$has.priv.elementary <- 
+  apartments_raw_small$Private.Elementary.School >= 1
 ```
 
 #### Middle School
@@ -685,7 +703,7 @@ Almost no apartments have a private middle school listed as nearby. But, a small
 percentage has 1 or 2 public middle school. Then, by similar reasoning, 1 categorical 
 variable is created to indicate whether an apartment has a public middle school nearby.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 pub.mid.plot <- plot_as_percentage(apartments_raw_small, "Public.Middle.School",
                                    "Count", "Public Middle School")
 priv.mid.plot <- plot_as_percentage(apartments_raw_small, "Private.Middle.School",
@@ -705,7 +723,7 @@ high school. One categorical variable is created for the number of public high s
 Since there are only a few apartments with more than 3 public high school nearby, 
 all the apartments with more than 3 public high schools are grouped together.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 cha.hi.plot <- plot_as_percentage(apartments_raw_small, "Charter.High.School",
                                   "Count", "Charter High School")
 pub.hi.plot <- plot_as_percentage(apartments_raw_small, "Public.High.School",
@@ -729,7 +747,7 @@ of combined elementary/middle school. More than half of the apartments has at le
 1 public elementary/middle school nearby. Of the ones with schools, the most common 
 arrangements are 1 or 2 combined elementary/middle school.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 plot_as_percentage(apartments_raw_small, 
                    "Public.Elementary.Middle.School",
                    "Count", "Public Elementary/Middle School")
@@ -741,7 +759,7 @@ the public school situation, most of the apartments with a private school only h
 1 private school nearby. However, unlike the public/private school situation, 
 there are virtually no charter elementary/middle school that's near any apartments.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 cha.el.mi.plot <- plot_as_percentage(apartments_raw_small, 
                                      "Charter.Elementary.Middle.School",
                                      "Count", "Charter Elementary/Middle School")
@@ -754,15 +772,17 @@ grid.arrange(cha.el.mi.plot, priv.el.mi.plot, ncol=2)
 Categorical variables for public and private elementary/middle schools are created. 
 The categories with less than 10 data points are compacted together.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 table(apartments_raw_small$Public.Elementary.Middle.School)
 table(apartments_raw_small$Private.Elementary.Middle.School)
 
-apartments_raw_small$pub.elt.mid <- as.character(apartments_raw_small$Public.Elementary.Middle.School)
+apartments_raw_small$pub.elt.mid <- 
+  as.character(apartments_raw_small$Public.Elementary.Middle.School)
 apartments_raw_small[apartments_raw_small$Public.Elementary.Middle.School >=6, 
                      c("pub.elt.mid")] <- "6_or_more"
 apartments_raw_small$pub.elt.mid <- as.factor(apartments_raw_small$pub.elt.mid)
-apartments_raw_small$priv.elt.mid <- as.character(apartments_raw_small$Private.Elementary.Middle.School)
+apartments_raw_small$priv.elt.mid <- 
+  as.character(apartments_raw_small$Private.Elementary.Middle.School)
 apartments_raw_small[apartments_raw_small$Private.Elementary.Middle.School >=3, 
                      c("priv.elt.mid")] <- "3_or_more"
 apartments_raw_small$priv.elt.mid <- as.factor(apartments_raw_small$priv.elt.mid)
@@ -775,7 +795,7 @@ middle/high schools are not as popular. Most of the apartments have no combined
 middle/high school nearby. Of the ones with a school of this kind, the most common 
 type is the public middle/high school.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 cha.mi.hi.plot <- plot_as_percentage(apartments_raw_small, 
                                      "Charter.Middle.High.School",
                                      "Count", "Charter Middle/High School")
@@ -790,12 +810,15 @@ grid.arrange(cha.mi.hi.plot, pub.mi.hi.plot, priv.mi.hi.plot, ncol=2)
 Although rare, there are still a considerable amount of units with a combined 
 middle/high school, so indicator variables are created for those school types.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 table(apartments_raw_small$Charter.Middle.High.School)
 table(apartments_raw_small$Private.Middle.High.School)
-apartments_raw_small$has.cha.mid.high <- apartments_raw_small$Charter.Middle.High.School >= 1
-apartments_raw_small$has.priv.mid.high <- apartments_raw_small$Private.Middle.High.School >= 1
-apartments_raw_small$has.pub.mid.high <- apartments_raw_small$Public.Middle.High.School >= 1
+apartments_raw_small$has.cha.mid.high <- 
+  apartments_raw_small$Charter.Middle.High.School >= 1
+apartments_raw_small$has.priv.mid.high <- 
+  apartments_raw_small$Private.Middle.High.School >= 1
+apartments_raw_small$has.pub.mid.high <- 
+  apartments_raw_small$Public.Middle.High.School >= 1
 ```
 
 ### Misc. Combined School
@@ -805,7 +828,7 @@ There are also some apartments with charter or public combined elementary/middle
 Of those school types, the private all-3-combined option seems to be the most popular. On 
 the other hand, there are virtually no public all-3-combined schools.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 priv.el.hi.plot <- plot_as_percentage(apartments_raw_small, 
                                       "Private.Elementary.High.School",
                                       "Count", "Private Elementary/High School")
@@ -825,13 +848,17 @@ A categorical variable is created for the all 4 types above with the exception f
 the public combined version, since the public combined schools are so rare. The category 
 is also compacted if there are only a few data points.
 
-```{r message=FALSE, error=FALSE}
-apartments_raw_small$priv.el.hi <- as.factor(apartments_raw_small$Private.Elementary.High.School)
-apartments_raw_small$cha.elt.mid.hi <- apartments_raw_small$Charter.Elementary.Middle.High.School >= 1
-apartments_raw_small$priv.elt.mid.hi <- as.character(apartments_raw_small$Private.Elementary.Middle.High.School)
+```{r message=FALSE, error=FALSE, warning=FALSE}
+apartments_raw_small$priv.el.hi <- 
+  as.factor(apartments_raw_small$Private.Elementary.High.School)
+apartments_raw_small$cha.elt.mid.hi <- 
+  apartments_raw_small$Charter.Elementary.Middle.High.School >= 1
+apartments_raw_small$priv.elt.mid.hi <- 
+  as.character(apartments_raw_small$Private.Elementary.Middle.High.School)
 apartments_raw_small[apartments_raw_small$Private.Elementary.Middle.High.School >= 2,
                      c("priv.elt.mid.hi")] <- "2_or_more"
-apartments_raw_small$priv.elt.mid.hi <- as.factor(apartments_raw_small$priv.elt.mid.hi)
+apartments_raw_small$priv.elt.mid.hi <- 
+  as.factor(apartments_raw_small$priv.elt.mid.hi)
 ```
 
 #### Colleges
@@ -839,7 +866,7 @@ apartments_raw_small$priv.elt.mid.hi <- as.factor(apartments_raw_small$priv.elt.
 Virtually all of the apartments have a college nearby listed on the website, so 
 it's not very useful.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 plot_as_percentage(apartments_raw_small, 
                    "college.count",
                    "Count", "Colleges")
@@ -850,16 +877,16 @@ plot_as_percentage(apartments_raw_small,
 Since an appropriate categorical version of the variables are created, the original 
 variables can be discarded.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 apartments_raw_small <- apartments_raw_small[, -which(names(apartments_raw_small) 
-                        %in% c("Private.Elementary.High.School", "Charter.Elementary.Middle.High.School",
-                               "Public.Elementary.Middle.High.School", "Private.Elementary.Middle.High.School",
-                               "Charter.Middle.High.School", "Public.Middle.High.School",
-                               "Private.Middle.High.School", "Charter.Elementary.Middle.School",
-                               "Public.Elementary.Middle.School", "Private.Elementary.Middle.School",
-                               "Charter.High.School", "Public.High.School", "Private.High.School",
-                               "Public.Middle.School", "Private.Middle.School",
-                               "Public.Elementary.School", "Private.Elementary.School"))]
+  %in% c("Private.Elementary.High.School", "Charter.Elementary.Middle.High.School",
+  "Public.Elementary.Middle.High.School", "Private.Elementary.Middle.High.School",
+  "Charter.Middle.High.School", "Public.Middle.High.School",
+  "Private.Middle.High.School", "Charter.Elementary.Middle.School",
+  "Public.Elementary.Middle.School", "Private.Elementary.Middle.School",
+  "Charter.High.School", "Public.High.School", "Private.High.School",
+  "Public.Middle.School", "Private.Middle.School",
+  "Public.Elementary.School", "Private.Elementary.School"))]
 apartments_raw_small <- apartments_raw_small[, -which(names(apartments_raw_small) 
                         %in% c("college.count"))]
 ```
@@ -871,7 +898,7 @@ feel no interruptions from some airports nearby. Almost 60% of the apartments
 experience active traffic in the surrounding. Essentially all of the apartments have 
 active or busy bussiness activities in the area.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 air_level_plot <- plot_as_percentage(apartments_raw_small, "air.level")
 traffic_level_plot <- plot_as_percentage(apartments_raw_small, "traffic.level")
 busi_level_plot <- plot_as_percentage(apartments_raw_small, "busi.level")
@@ -881,7 +908,7 @@ grid.arrange(air_level_plot, traffic_level_plot, busi_level_plot, ncol=2)
 All of the activity levels have some data points, so they are simply turned into 
 categorical variables.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 table(apartments_raw_small$traffic.level)
 table(apartments_raw_small$busi.level)
 table(apartments_raw_small$air.level)
@@ -898,7 +925,7 @@ center, the most common number of shopping center is 3, while 2 and 1 are evenly
 Military bases are listed almost universally on the website for the apartments. Similarly, 
 almost all of the apartments has 5 recreational centers listed.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 shopping.num.plot <- plot_as_percentage(apartments_raw_small, "shopping.num")
 rec.num.plot <- plot_as_percentage(apartments_raw_small, "rec.num")
 base.num.plot <- plot_as_percentage(apartments_raw_small, "base.num")
@@ -908,7 +935,7 @@ grid.arrange(shopping.num.plot, rec.num.plot, base.num.plot, ncol=2)
 Virtually all of the apartments have the same number of rail station, airports, 
 or transit station listed on the webpage, so the variables here are not very useful.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 rail.num.plot <- plot_as_percentage(apartments_raw_small, "rail.num")
 air.num.plot <- plot_as_percentage(apartments_raw_small, "air.num")
 transit.num.plot <- plot_as_percentage(apartments_raw_small, "transit.num")
@@ -919,7 +946,7 @@ In the end, the variables without much data points in the 0 category are dropped
 while the military base is turned into categorical variable. The shoping center variable 
 is retained as before.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 apartments_raw_small <- apartments_raw_small[, -which(names(apartments_raw_small) 
                         %in% c("transit.num", "air.num", "rail.num", "rec.num"))]
 apartments_raw_small$base.num <- apartments_raw_small$base.num != 0
@@ -933,7 +960,7 @@ Interestingly, the business levels are pretty evenly split between the different
 levels of shopping centers. Thus, the criteria for business level may not be 
 very related to the shopping centers.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 shop.busi.freq <- data.frame(table(apartments_raw_small$shopping.num, 
                                    apartments_raw_small$busi.level))
 colnames(shop.busi.freq) <- c("Shopping", "Busy", "Freq")
@@ -945,7 +972,7 @@ However, a chi-squared test reveals that the two variables are not independent. 
 there may be some influence from the number of business centers nearby to the assessment 
 of the business level provided by the website.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 apartment_busi_test <- apartments_raw_small[apartments_raw_small$busi.level != "-", ]
 apartment_busi_test$busi.level <- as.character(apartment_busi_test$busi.level)
 chisq.test(table(apartment_busi_test$shopping.num, 
@@ -969,7 +996,7 @@ For the baths case, the upward trend continued until the units with 4 bathrooms.
 Furthermore, the distribution of log(sqft) is clearly less linear, with the line failing 
 to meet the center of the distribution.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 coefs.sqft.beds <- coef(lm(log(sqft) ~ beds, data = apartments_raw_small))
 coefs.sqft.baths <- coef(lm(log(sqft) ~ log(baths + 1), data = apartments_raw_small))
 bed.sqft.box <- ggplot(apartments_raw_small, aes(x=beds, y = log(sqft))) +
@@ -999,15 +1026,17 @@ the distribution of rents for 4 baths is extremely skewed to the right, with 50%
 data concentrated at the lower end of the distribution. Thus, the linear function 
 significantly over-estimated the rent.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 coefs.rent.beds <- coef(lm(log(rent) ~ beds, data = apartments_raw_small))
 coefs.rent.baths <- coef(lm(log(rent) ~ log(baths + 1), data = apartments_raw_small))
 
-bed.rent.plt <- ggplot(apartments_raw_small, aes(group=beds, x=beds, y = log(rent))) +
+bed.rent.plt <- ggplot(apartments_raw_small, 
+                       aes(group=beds, x=beds, y = log(rent))) +
   geom_boxplot() +
   geom_abline(intercept = coefs.rent.beds[1], slope = coefs.rent.beds[2],
               color="red", alpha=0.5)
-bath.rent.plt <- ggplot(apartments_raw_small, aes(group=log(baths + 1), x=log(baths + 1), y = log(rent))) +
+bath.rent.plt <- ggplot(apartments_raw_small, 
+                        aes(group=log(baths + 1), x=log(baths + 1), y = log(rent))) +
   geom_boxplot() +
   geom_abline(intercept = coefs.rent.baths[1], slope = coefs.rent.baths[2],
               color="red", alpha=0.5)
@@ -1023,7 +1052,7 @@ was different between the bedroom counts. Thus, it suggests that an interaction 
 would be needed to take into account of the difference in the shift between bedroom 
 count.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 ggplot(apartments_raw_small, aes(x = log(sqft), y = bed_count, fill = bath_count)) +
   geom_density_ridges_gradient()
 ```
@@ -1037,7 +1066,7 @@ level, but it's not as significant as the shift in the sqft case. Thus, an inter
 term may help to improve performance, but the improvement may not be as significant 
 as for predicting sqft.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 ggplot(apartments_raw_small, aes(x = log(rent), y = bed_count, fill = bath_count)) +
   geom_density_ridges_gradient()
 ```
@@ -1049,14 +1078,18 @@ ggplot(apartments_raw_small, aes(x = log(rent), y = bed_count, fill = bath_count
 Interestingly, the type of parking does not seem to help predict the size of the 
 apartment units. In all 4 graphs, the distribution of both cases essentially overlaps. 
 
-```{r message=FALSE, error=FALSE}
-parking.sqft <- ggplot(apartments_raw_small, aes(group=has.parking, fill=has.parking, x = log(sqft))) +
+```{r message=FALSE, error=FALSE, warning=FALSE}
+parking.sqft <- ggplot(apartments_raw_small, 
+                       aes(group=has.parking, fill=has.parking, x = log(sqft))) +
   geom_density(adjust=1.5, alpha=.4)
-street.sqft <- ggplot(apartments_raw_small, aes(group=has.street, fill=has.street, x = log(sqft))) +
+street.sqft <- ggplot(apartments_raw_small, 
+                      aes(group=has.street, fill=has.street, x = log(sqft))) +
   geom_density(adjust=1.5, alpha=.4)
-garage.sqft <- ggplot(apartments_raw_small, aes(group=has.garage, fill=has.garage, x = log(sqft))) +
+garage.sqft <- ggplot(apartments_raw_small, 
+                      aes(group=has.garage, fill=has.garage, x = log(sqft))) +
   geom_density(adjust=1.5, alpha=.4)
-lot.sqft <- ggplot(apartments_raw_small, aes(group=has.lot, fill=has.lot, x = log(sqft))) +
+lot.sqft <- ggplot(apartments_raw_small, 
+                   aes(group=has.lot, fill=has.lot, x = log(sqft))) +
   geom_density(adjust=1.5, alpha=.4)
 grid.arrange(parking.sqft, street.sqft, garage.sqft, lot.sqft)
 ```
@@ -1069,14 +1102,18 @@ distribution much. In this case, the type of parking may contain information abo
 community that the apartment complex is located in. The ones with garage parking may 
 indicate a sort of gated community where the street parking may suggest the opposite.
 
-```{r message=FALSE, error=FALSE}
-parking.rent <- ggplot(apartments_raw_small, aes(group=has.parking, fill=has.parking, x = log(rent))) +
+```{r message=FALSE, error=FALSE, warning=FALSE}
+parking.rent <- ggplot(apartments_raw_small, 
+                       aes(group=has.parking, fill=has.parking, x = log(rent))) +
   geom_density(adjust=1.5, alpha=.4)
-street.rent <- ggplot(apartments_raw_small, aes(group=has.street, fill=has.street, x = log(rent))) +
+street.rent <- ggplot(apartments_raw_small, 
+                      aes(group=has.street, fill=has.street, x = log(rent))) +
   geom_density(adjust=1.5, alpha=.4)
-garage.rent <- ggplot(apartments_raw_small, aes(group=has.garage, fill=has.garage, x = log(rent))) +
+garage.rent <- ggplot(apartments_raw_small, 
+                      aes(group=has.garage, fill=has.garage, x = log(rent))) +
   geom_density(adjust=1.5, alpha=.4)
-lot.rent <- ggplot(apartments_raw_small, aes(group=has.lot, fill=has.lot, x = log(rent))) +
+lot.rent <- ggplot(apartments_raw_small, 
+                   aes(group=has.lot, fill=has.lot, x = log(rent))) +
   geom_density(adjust=1.5, alpha=.4)
 grid.arrange(parking.rent, street.rent, garage.rent, lot.rent)
 ```
@@ -1089,7 +1126,7 @@ banning pet correlate to bigger apartments. However, the opposite is true regard
 the rent. On the other hand, negotiable or unknown policies correlate to the same pattern of 
 apartment size and rent.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 pet.sqft <- ggplot(apartments_raw_small, aes(x=pet.allowed, y = log(sqft))) +
   geom_boxplot()
 pet.rent <- ggplot(apartments_raw_small, aes(x=pet.allowed, y = log(rent))) +
@@ -1107,7 +1144,7 @@ the level of activities may have captured some geo-location information regardin
 apartments. The busier ones may be located near the developed portion of the city, which 
 may not support larger apartments.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 traffic.plot <- ggplot(apartments_raw_small, aes(x=traffic.level, y = log(sqft))) +
   geom_boxplot()
 busi.plot <- ggplot(apartments_raw_small, aes(x=busi.level, y = log(sqft))) +
@@ -1119,7 +1156,7 @@ The opposite pattern holds for rent. In general, the busier the area is, the hig
 rent. This also seems to suggest the information of activity level correspond to the location 
 of the apartment in the city.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 ggplot(apartments_raw_small, aes(x=traffic.level, y = log(rent))) +
   geom_boxplot()
 ggplot(apartments_raw_small, aes(x=busi.level, y = log(rent))) +
@@ -1134,7 +1171,7 @@ to approximate the center of the distribution. The exact opposite can be said wi
 respect to sqft. Similar to activity level, besides being a service themselves, 
 shopping center may also be related to location information.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 coefs.rent.shop <- coef(lm(log(rent) ~ shopping.num, data = apartments_raw_small))
 coefs.sqft.shop <- coef(lm(log(sqft) ~ shopping.num, data = apartments_raw_small))
 
@@ -1160,7 +1197,7 @@ hub of apartments is in the south east of the city, and it's not as concentrated
 as the hubs in the north. The rest of the apartments are more or less evenly distributed 
 throughout the city.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 ggplot(apartments_raw_small, aes(x=lng, y=lat)) + geom_bin2d(bins = 70) +
   scale_fill_continuous(type = "viridis") + xlim(-88, -87.35) + ylim(41.56, 42.06)
 ```
@@ -1177,7 +1214,7 @@ better for pockets of apartments. Additionally, it may be possible to reparametr
 from the center of the city by radius and angle. That way, there may be a more consistent 
 pattern in the rent.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 apartment_geo_rounded <- data.frame(apartments_raw_small)
 apartment_geo_rounded$lat <- round(apartment_geo_rounded$lat, 2)
 apartment_geo_rounded$lng <- round(apartment_geo_rounded$lng, 2)
@@ -1189,7 +1226,7 @@ Similar statement regarding linear pattern can be said for the sqft as well. The
 distribution is fairly flat in most places. However, in general, the west of the city seems 
 to have larger apartments than the eastern side.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 ggplot(apartment_geo_rounded[!is.na(apartments_raw_small$sqft), ], aes(x=lng, y=lat, fill=sqft)) + 
   geom_tile() + xlim(-88, -87.35) + ylim(41.56, 42.06) +
   scale_fill_viridis(trans = "log")
@@ -1200,7 +1237,7 @@ of the apartments. The busy areas with 3 shopping centers are located in the cen
 hubs of the apartments, while the less busy areas are in the surrounding regions. 
 The shopping centers are more spread throughout the city.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 ggplot(apartment_geo_rounded, aes(x=lng, y=lat, fill=busi.level)) + 
   geom_tile() + xlim(-88, -87.35) + ylim(41.56, 42.06)
 ggplot(apartment_geo_rounded, aes(x=lng, y=lat, fill=shopping.num)) + 
@@ -1216,7 +1253,7 @@ sound score is negatively correlated with the transportation scores. From the gr
 regarding business levels, the geographical location may play a role in the correlations 
 here. 
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 ggpairs(apartments_raw_small[, c("walk.score", "bike.score", "sound.score", "transit.score")], 
         title="Environmment Scores") 
 ```
@@ -1227,7 +1264,7 @@ captured almost 90% of the variations in the data. The projection of the variabl
 into the PC vector space also showed the association between the transportation related 
 scores and sound score as indicated before.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 apartment.sqft.drop <- apartments_raw_small[!is.na(apartments_raw_small$sqft), ]
 score.pcs <- prcomp(apartment.sqft.drop[, c("walk.score", "bike.score", 
                                             "sound.score", "transit.score")]
@@ -1243,14 +1280,14 @@ The correlation between the PCs and the target variables are computed. The coeff
 suggest that the PCs from the environment scores are not very useful in predicting 
 the sqft. However, the sqft as well as PC1 may be useful in predicting the rent.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 cor(score.pcs.dat)[, 5:6]
 ```
 
 The pairwise plot of the first two PCs and sqft shows that there is indeed not much 
 relation between the environment score and the size of the apartment.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 ggpairs(
   score.pcs.dat,
   title = "Pairwise PC Plot",
@@ -1263,7 +1300,7 @@ the log(sqft) seems to fit a linear pattern decently, with the points being even
 on either side of the line throughout. However, the PC1 plot shows somme non-linearity, 
 with the smaller PCs all above the line, and the larger PCs clustered around in a bulk.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 pc1.plt <- ggplot(score.pcs.dat, aes(x=PC1, y=log.rent)) + geom_point() + 
   geom_smooth(method=lm , color="red")
 sqft.plt <- ggplot(score.pcs.dat, aes(x=log.sqft, y=log.rent)) + geom_point() + 
@@ -1281,7 +1318,7 @@ However, before the model can be fitted, the data need to be scaled and transfor
 to make sure that they are on the same unit, with the considered transformations applied. 
 Thus, a few helper functions are created.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 scale_by <- function(src_col, scale_col, logged=F, inc=0) {
   if(logged) {
     scale_col <- log(scale_col + inc)
@@ -1341,7 +1378,7 @@ set to 0, then it is equivalent to having a correction term to the linear trend 
 the bathrooms and bedrooms, so the non-linearity in the data can potentially be taken 
 into account.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 apartment_sqft <- apartments_raw_small[!is.na(apartments_raw_small$sqft), 
                   -which(names(apartments_raw_small) %in% 
                   c("name", "address", "state", "city", "rent"))]
@@ -1376,7 +1413,7 @@ sqft_test <- as.matrix(sqft_test)
 The LASSO model is fitted, with the hyperparameter lambda chosen via 10-fold 
 cross validation. The lambda corresponding to the minimum loss is selected.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 cv.lasso.sqft <- cv.glmnet(sqft_train, sqft_train_target, nfolds = 10)
 plot(cv.lasso.sqft)
 sqft.coef <- coef(cv.lasso.sqft, s = 'lambda.min')
@@ -1385,7 +1422,7 @@ sqft.coef <- as.data.frame(sqft.coef[sqft.coef[,1]!= 0, ])
 
 The training error is given below in the order of RMSE and MAD. 
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 sqft.train.predict <- predict(cv.lasso.sqft, sqft_train, s = "lambda.min")
 sqft.MSE <- sum((exp(sqft.train.predict) - exp(sqft_train_target))^2)
 sqft.MSE <- sqft.MSE / length(sqft_train_target)
@@ -1397,7 +1434,7 @@ The testing error is given below in the order of RMSE and MAD as well. The testi
 is only slightly above the training error, which suggest that the model did not overfit 
 to the data, and potentially could be underfitted to the data.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 sqft.test.predict <- predict(cv.lasso.sqft, sqft_test, s = "lambda.min")
 sqft.MSE <- sum((exp(sqft.test.predict) - exp(sqft_test_target))^2)
 sqft.MSE <- sqft.MSE / length(sqft_test_target)
@@ -1411,9 +1448,11 @@ the model is consistently under-estimating the size. Furthermore, as the apartme
 larger, the difference becomes greater, which suggests that there's non-linearity in the data 
 still remaining after the log transformations.
 
-```{r message=FALSE, error=FALSE}
-sqft.resid.train <- data.frame(exp(sqft_train_target), (exp(sqft.train.predict) - exp(sqft_train_target)))
-sqft.resid.test <- data.frame(exp(sqft_test_target), (exp(sqft.test.predict) - exp(sqft_test_target)))
+```{r message=FALSE, error=FALSE, warning=FALSE}
+sqft.resid.train <- data.frame(exp(sqft_train_target), 
+                               (exp(sqft.train.predict) - exp(sqft_train_target)))
+sqft.resid.test <- data.frame(exp(sqft_test_target), 
+                              (exp(sqft.test.predict) - exp(sqft_test_target)))
 colnames(sqft.resid.test) <- c("sqft", "residual")
 colnames(sqft.resid.train) <- c("sqft", "residual")
 sqft.train.plot <- ggplot(sqft.resid.train, aes(x=sqft, y=residual)) + geom_point() +
@@ -1429,7 +1468,7 @@ was making consistent error for the larger apartments, an extra variable sqft.re
 is added to indicate which sqft is estimated. Thus, for downstream predictions, the error 
 may be taken into account.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 apartments_raw_small$sqft.regressed <- is.na(apartments_raw_small$sqft)
 apartments_raw_small[apartments_raw_small$sqft.regressed, "sqft"] <- -1
 apartment.composite <- create_score(apartments_raw_small, rep(T, nrow(apartments_raw_small)))
@@ -1448,13 +1487,13 @@ sqft.target <- log(sqft.fill.scaled[!apartments_raw_small$sqft.regressed, "sqft"
 sqft.train <- apartment.fillsqft[!apartments_raw_small$sqft.regressed, ]
 full.lasso.sqft <- glmnet(sqft.train, sqft.target, 
                           lambda=cv.lasso.sqft$lambda.min)
-save(full.lasso.sqft, "sqft.mod.RData")
+save(full.lasso.sqft, file="sqft.mod.RData")
 ```
 
 The RMSE and MAD on the whole dataset is given below. It is similar to the error 
 on the training set.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 sqft.full.predict <- predict(full.lasso.sqft, sqft.train)
 sqft.full.MSE <- sum((exp(sqft.full.predict) - exp(sqft.target))^2)
 sqft.full.MSE <- sqft.full.MSE / length(sqft.target)
@@ -1465,7 +1504,7 @@ mean(abs(exp(sqft.full.predict) - exp(sqft.target)))
 The missing sqft is filled in using the sqft calculated on the model. It is a form 
 of interpolation since it's the same dataset.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 filled_sqft <- predict(full.lasso.sqft, apartment.fillsqft[apartments_raw_small$sqft.regressed, ])
 apartments_raw_small[apartments_raw_small$sqft.regressed, "sqft"] <- exp(filled_sqft)
 ```
@@ -1474,7 +1513,7 @@ The distribution of the log(rent) is plotted against sqft.regressed. It shows th
 the apartments with provided sqft has a slightly higher rent then the apartments with 
 regressed sqft in general.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 ggplot(apartments_raw_small, aes(group=sqft.regressed, fill=sqft.regressed, x = log(rent))) +
   geom_density(adjust=1.5, alpha=.4)
 ```
@@ -1486,7 +1525,7 @@ the helper functions from earlier are modified to incorporate log(sqft). Further
 the data is divided again into training set and testing set as before, and the variables 
 are selected based on prior observations, and the fact that LASSO will be used.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 scale_apartment <- function(og, train) {
   df <- as.data.frame(og)
   df <- data.frame(og)
@@ -1546,7 +1585,7 @@ rent_test <- as.matrix(rent_test)
 Similar to previously, the hyperparameter is chosen via cross validation. The lambda 
 that minimizes the MSE is selected.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 cv.lasso.rent <- cv.glmnet(rent_train, rent_train_target, nfolds = 10)
 plot(cv.lasso.rent)
 rent.coef <- coef(cv.lasso.rent, s = 'lambda.min')
@@ -1555,7 +1594,7 @@ rent.coef <- as.data.frame(rent.coef[rent.coef[,1]!= 0, ])
 
 The training error is given below in the order of RMSE and MAD.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 rent.train.predict <- predict(cv.lasso.rent, rent_train, s = "lambda.min")
 rent.MSE <- sum((exp(rent.train.predict) - exp(rent_train_target))^2)
 rent.MSE <- rent.MSE / length(rent_train_target)
@@ -1567,7 +1606,7 @@ The test error is given below. It is increased from the training error, but not
 by much. Thus, it suggests that the model did not overfit significantly on the training 
 set.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 rent.test.predict <- predict(cv.lasso.rent, rent_test, s = "lambda.min")
 rent.MSE <- sum((exp(rent.test.predict) - exp(rent_test_target))^2)
 rent.MSE <- rent.MSE / length(rent_test_target)
@@ -1581,9 +1620,11 @@ expensive the apartment, the greater the error. Furthermore, for the expensive a
 the LASSO regression consistently under-predicted the rent, similar to the sqft case. 
 Thus, it suggests that there are non-linearities not handled by the log transformation. 
 
-```{r message=FALSE, error=FALSE}
-rent.resid.train <- data.frame(exp(rent_train_target), (exp(rent.train.predict) - exp(rent_train_target)))
-rent.resid.test <- data.frame(exp(rent_test_target), (exp(rent.test.predict) - exp(rent_test_target)))
+```{r message=FALSE, error=FALSE, warning=FALSE}
+rent.resid.train <- data.frame(exp(rent_train_target), 
+                               (exp(rent.train.predict) - exp(rent_train_target)))
+rent.resid.test <- data.frame(exp(rent_test_target), 
+                              (exp(rent.test.predict) - exp(rent_test_target)))
 colnames(rent.resid.test) <- c("rent", "residual")
 colnames(rent.resid.train) <- c("rent", "residual")
 rent.train.plot <- ggplot(rent.resid.train, aes(x=rent, y=residual)) + geom_point() + 
@@ -1597,7 +1638,7 @@ The LASSO model is fitted on the full dataset with the same hyperparameter and v
 The RMSE and MAD is given below. The error is similar to the error achieved on the 
 training set previously.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 lasso_target.full <- log(apartment_rent$rent)
 apartment_rent <- apartments_raw_small[, -which(names(apartments_raw_small) %in% 
                   c("name", "address", "state", "city"))]
@@ -1613,7 +1654,7 @@ lasso_rent.full <- model.matrix(log(rent)~. + bed_count:bath_count + beds:bath_c
                              lat:lng + lat:zip, 
                            lasso_rent_scaled)[, -1]
 full_lasso_mod <- glmnet(lasso_rent.full, lasso_target.full, lambda=cv.lasso.rent$lambda.min)
-save(full_lasso_mod, "rent.mod.RData")
+save(full_lasso_mod, file="rent.mod.RData")
 rent.full.predict <- exp(predict(full_lasso_mod, lasso_rent.full))
 rent.full.MSE <- sum((rent.full.predict - exp(lasso_target.full))^2)
 rent.full.MSE <- rent.full.MSE / length(lasso_target.full)
@@ -1627,8 +1668,9 @@ MAD
 The residual plot on the full dataset is given below. The same pattern persist from 
 the training/testing residual plot.
 
-```{r message=FALSE, error=FALSE}
-lasso.resid.full <- data.frame(exp(lasso_target.full), (rent.full.predict - exp(lasso_target.full)))
+```{r message=FALSE, error=FALSE, warning=FALSE}
+lasso.resid.full <- data.frame(exp(lasso_target.full), 
+                               (rent.full.predict - exp(lasso_target.full)))
 colnames(lasso.resid.full) <- c("rent", "residual")
 ggplot(lasso.resid.full, aes(x=rent, y=residual)) + geom_point() + 
   geom_abline(slope=0, color="red")
@@ -1638,7 +1680,7 @@ If the model is only applied to less expensive apartments with <= $3000 rent, th
 the RMSE and MAD are smaller than the full dataset, which also suggests that the 
 more expensive apartments present a problem to the model.
 
-```{r message=FALSE, error=FALSE}
+```{r message=FALSE, error=FALSE, warning=FALSE}
 predict.idx <- apartment_rent$rent <= 3000
 rent.limit.predict <- rent.full.predict[predict.idx]
 lasso_target.limit <- lasso_target.full[predict.idx]
@@ -1660,8 +1702,9 @@ function also over-predicted the center of the log(rent) distribution. Furthermo
 as the apartments get closer to the $3000 range, the variance of the residual increased, so 
 the model performance is worse the more expensive the apartments get.
 
-```{r message=FALSE, error=FALSE}
-lasso.resid.limit <- data.frame(exp(lasso_target.limit), (rent.limit.predict - exp(lasso_target.limit)))
+```{r message=FALSE, error=FALSE, warning=FALSE}
+lasso.resid.limit <- data.frame(exp(lasso_target.limit), 
+                                (rent.limit.predict - exp(lasso_target.limit)))
 colnames(lasso.resid.limit) <- c("rent", "residual")
 ggplot(lasso.resid.limit, aes(x=rent, y=residual)) + geom_point() + 
   geom_abline(slope=0, color="red")
@@ -1688,7 +1731,7 @@ sits closer to the center of distribution of the apartments. Thus, the apartment
 could be normalized with respect to the apartment market and their peers by calculating 
 a score such as:
 
-$$Score = (Apartment_Price - Model_Price) / (MAD)$$
+$$Score = (ApartmentPrice - ModelPrice) / (MAD)$$
 
 It would be able to give the potential renter a sense of how their apartment is priced 
 with respect to the distribution of similar apartments.
