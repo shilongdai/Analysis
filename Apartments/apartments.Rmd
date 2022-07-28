@@ -5,11 +5,6 @@ output:
   html_notebook: default
 ---
 
-```{r include=FALSE}
-knitr::opts_chunk$set(tidy.opts = list(width.cutoff = 60), tidy = TRUE)
-```
-
-
 ```{r message=FALSE, error=FALSE, warning=FALSE}
 set.seed(97) 
 library(MASS)
@@ -953,7 +948,6 @@ apartments_raw_small$base.num <- apartments_raw_small$base.num != 0
 apartments_raw_small$base.num <- as.factor(apartments_raw_small$base.num)
 ```
 
-
 ### Relation between the number of shopping center and business level
 
 Interestingly, the business levels are pretty evenly split between the different 
@@ -1187,6 +1181,7 @@ shop.sqft.plt <- ggplot(apartments_raw_small,
                         geom_abline(intercept = coefs.sqft.shop[1], 
                                     slope = coefs.sqft.shop[2],
                                     color="red", alpha=0.5)
+grid.arrange(shop.sqft.plt, shop.rent.plt)
 ```
 
 ### Geo-information
@@ -1329,17 +1324,20 @@ scale_by <- function(src_col, scale_col, logged=F, inc=0) {
   return((src_col - center) / scale)
 }
 
-create_score <- function(og, train_idx) {
+create_score <- function(og, train_idx, score.pca=NULL) {
   df <- data.frame(og)
   df[, c("PC1", "PC2", "PC3", "PC4")] <- 0
-  score.pca <- prcomp(df[train_idx, c("walk.score", "bike.score", 
+  if(is.null(score.pca)) {
+    score.pca <- prcomp(df[train_idx, c("walk.score", "bike.score", 
                              "sound.score", "transit.score")], scale = TRUE)
+  }
   score.pca.test <- predict(score.pca, og[-train_idx, ])
-  df[train_idx, c("PC1", "PC2", "PC3", "PC4")] <- score.pca$x
+  score.pca.train <- predict(score.pca, og[train_idx, ])
+  df[train_idx, c("PC1", "PC2", "PC3", "PC4")] <- score.pca.train
   df[-train_idx, c("PC1", "PC2", "PC3", "PC4")] <- score.pca.test
   df <- df[, -which(names(df) %in% 
               c("walk.score", "bike.score", "sound.score", "transit.score"))]
-  return(df)
+  return(list("data"=df, "pca"=score.pca))
 }
 
 scale_apartment <- function(og, train) {
@@ -1386,7 +1384,7 @@ apartment_sqft <- apartments_raw_small[!is.na(apartments_raw_small$sqft),
 train.control <- trainControl(method = "cv", number = 10)
 sqft_train_size <- floor(0.75 * nrow(apartment_sqft))
 sqft_train_ind <- sample(seq_len(nrow(apartment_sqft)), size = sqft_train_size)
-apartment_sqft <- create_score(apartment_sqft, sqft_train_ind)
+apartment_sqft <- create_score(apartment_sqft, sqft_train_ind)[["data"]]
 apartment_sqft_scaled <- data.frame(apartment_sqft)
 
 apartment_sqft_scaled[sqft_train_ind, ] <- scale_apartment(apartment_sqft[sqft_train_ind, ], 
@@ -1406,6 +1404,12 @@ sqft_train <- lasso_sqft[sqft_train_ind, ]
 sqft_train_target <- log(apartment_sqft_scaled[sqft_train_ind, "sqft"])
 sqft_test <- lasso_sqft[-sqft_train_ind, ]
 sqft_test_target <- log(apartment_sqft_scaled[-sqft_train_ind, "sqft"])
+
+sqft_train_export <- data.frame(apartment_sqft_scaled[sqft_train_ind, ])
+sqft_test_export <- data.frame(apartment_sqft_scaled[-sqft_train_ind, ])
+write.csv(sqft_train_export, "sqft_train.csv", row.names = FALSE)
+write.csv(sqft_test_export, "sqft_test.csv", row.names = FALSE)
+
 sqft_train <- as.matrix(sqft_train)
 sqft_test <- as.matrix(sqft_test)
 ```
@@ -1471,7 +1475,9 @@ may be taken into account.
 ```{r message=FALSE, error=FALSE, warning=FALSE}
 apartments_raw_small$sqft.regressed <- is.na(apartments_raw_small$sqft)
 apartments_raw_small[apartments_raw_small$sqft.regressed, "sqft"] <- -1
-apartment.composite <- create_score(apartments_raw_small, rep(T, nrow(apartments_raw_small)))
+apartment.score <- create_score(apartments_raw_small, rep(T, nrow(apartments_raw_small)))
+apartment.composite <- apartment.score[["data"]]
+apartment.sqft.pca <- apartment.score[["pca"]]
 sqft.fill.scaled <- scale_apartment(apartment.composite[, 
                   -which(names(apartment.composite) %in% 
                   c("name", "address", "state", "city", "rent", "sqft.regressed"))], 
@@ -1487,8 +1493,17 @@ sqft.target <- log(sqft.fill.scaled[!apartments_raw_small$sqft.regressed, "sqft"
 sqft.train <- apartment.fillsqft[!apartments_raw_small$sqft.regressed, ]
 full.lasso.sqft <- glmnet(sqft.train, sqft.target, 
                           lambda=cv.lasso.sqft$lambda.min)
+full.sqft.coef <- coef(full.lasso.sqft, s = 'lambda.min')
+selected.sqft <- rownames(full.sqft.coef)[full.sqft.coef[,1]!= 0][-1]
+sqft.train <- sqft.train[, selected.sqft]
+full.lasso.sqft <- glmnet(sqft.train, sqft.target, 
+                          lambda=cv.lasso.sqft$lambda.min)
+
 save(full.lasso.sqft, file="sqft.mod.RData")
+save(selected.sqft, file="sqft.coefs.RData")
+save(apartment.sqft.pca, file="sqft.pca.RData")
 ```
+
 
 The RMSE and MAD on the whole dataset is given below. It is similar to the error 
 on the training set.
@@ -1505,7 +1520,8 @@ The missing sqft is filled in using the sqft calculated on the model. It is a fo
 of interpolation since it's the same dataset.
 
 ```{r message=FALSE, error=FALSE, warning=FALSE}
-filled_sqft <- predict(full.lasso.sqft, apartment.fillsqft[apartments_raw_small$sqft.regressed, ])
+filled_sqft <- predict(full.lasso.sqft, apartment.fillsqft[apartments_raw_small$sqft.regressed, 
+                                                           selected.sqft])
 apartments_raw_small[apartments_raw_small$sqft.regressed, "sqft"] <- exp(filled_sqft)
 ```
 
@@ -1556,7 +1572,7 @@ apartment_rent <- apartments_raw_small[, -which(names(apartments_raw_small) %in%
                   c("name", "address", "state", "city"))]
 rent_train_size <- floor(0.75 * nrow(apartment_rent))
 rent_train_ind <- sample(seq_len(nrow(apartment_rent)), size = rent_train_size)
-apartment_rent <- create_score(apartment_rent, rent_train_ind)
+apartment_rent <- create_score(apartment_rent, rent_train_ind)[["data"]]
 
 apartment_rent.scaled <- data.frame(apartment_rent)
 apartment_rent.scaled[rent_train_ind, ] <- scale_apartment(apartment_rent[rent_train_ind, ],
@@ -1578,6 +1594,12 @@ rent_train <- lasso_rent[rent_train_ind, ]
 rent_train_target <- log(apartment_rent[rent_train_ind, "rent"])
 rent_test <- lasso_rent[-rent_train_ind, ]
 rent_test_target <- log(apartment_rent[-rent_train_ind, "rent"])
+
+rent_train_export <- data.frame(apartment_rent.scaled[rent_train_ind, ])
+rent_test_export <- data.frame(apartment_rent.scaled[-rent_train_ind, ])
+write.csv(rent_train_export, "train.csv", row.names = FALSE)
+write.csv(rent_test_export, "test.csv", row.names = FALSE)
+
 rent_train <- as.matrix(rent_train)
 rent_test <- as.matrix(rent_test)
 ```
@@ -1642,7 +1664,9 @@ training set previously.
 lasso_target.full <- log(apartment_rent$rent)
 apartment_rent <- apartments_raw_small[, -which(names(apartments_raw_small) %in% 
                   c("name", "address", "state", "city"))]
-apartment_rent <- create_score(apartment_rent, rep(T, nrow(apartment_rent)))
+apartment.score <- create_score(apartment_rent, rep(T, nrow(apartment_rent)))
+apartment_rent <- apartment.score[["data"]]
+apartment.rent.pca <- apartment.score[["pca"]]
 lasso_rent_scaled <- as.data.frame(apartment_rent)
 lasso_rent_scaled <- scale_apartment(lasso_rent_scaled, lasso_rent_scaled)
 lasso_rent.full <- model.matrix(log(rent)~. + bed_count:bath_count + beds:bath_count + 
@@ -1654,7 +1678,17 @@ lasso_rent.full <- model.matrix(log(rent)~. + bed_count:bath_count + beds:bath_c
                              lat:lng + lat:zip, 
                            lasso_rent_scaled)[, -1]
 full_lasso_mod <- glmnet(lasso_rent.full, lasso_target.full, lambda=cv.lasso.rent$lambda.min)
+
+full.rent.coef <- coef(full_lasso_mod, s = 'lambda.min')
+selected.rent <- rownames(full.rent.coef)[full.rent.coef[,1]!= 0][-1]
+lasso_rent.full <- lasso_rent.full[, selected.rent]
+full_lasso_mod <- glmnet(lasso_rent.full, lasso_target.full, 
+                          lambda=cv.lasso.rent$lambda.min)
+
 save(full_lasso_mod, file="rent.mod.RData")
+save(selected.rent, file="rent.coefs.RData")
+save(apartment.rent.pca, file="rent.pca.RData")
+
 rent.full.predict <- exp(predict(full_lasso_mod, lasso_rent.full))
 rent.full.MSE <- sum((rent.full.predict - exp(lasso_target.full))^2)
 rent.full.MSE <- rent.full.MSE / length(lasso_target.full)
