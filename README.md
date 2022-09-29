@@ -3,7 +3,8 @@ Repository for various statistics analysis/projects
 
 ## Apartments
 
-The data is a set of apartment model information crawled from apartment.com on May 25th.
+The data is a set of apartment model information crawled from apartment.com on May 25th. The 
+scraper is located at: https://github.com/shilongdai/Apartment_Scraper.
 It contains about 17K apartment listings. Each entry is a specific type of apartment listed.
 An overview of the variable is as follow:
 
@@ -85,3 +86,9 @@ one error on the test set, with an accuracy of 96.23% as opposed to 94.34%.
 ## ApplicationOpt
 
 The goal is to optimize the decision of applying to something like universities, positions, jobs etc. In these situations, there are multiple options, but in the end only one can be chosen. Thus, in the end, regardless of which universities, positions, or jobs that someone had applied to, the only one that matters is the one which the person chooses to accept. Hence, it is a different class of problem than the ones commonly considered, such as stock selection.
+
+## TradeRoute
+
+In many simulation games, there is an element of trade. Typically, the player visits various producers, which sells a certain set of good for a low price, and then delivers the goods to various consumers, which would purchase the goods for a higher price. A natural in these cases would be to maximize the profit after a successful run. For this analysis, the focus is on Star Citizen, which is a space sim game currently in development. In SC, each outposts on planets/moons, and space stations has a list of goods that they would sell and purchase. For instance, a mining outposts would sell various minerals while buying things like medical supplies. Often, the producing location would sell the goods at a cheaper price. Thus, a trading strategy would be to purchase goods from the producing locations to sell in major hubs like space stations or cities. Thus, the goal would be to determine the optimal producers/consumers to visit, and the amount to purchase/sell. The problem is NP-hard, but it can be formulated as a mixed integer programming problem under the decision theory framework.
+
+
