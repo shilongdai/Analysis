@@ -1482,6 +1482,7 @@ sqft.fill.scaled <- scale_apartment(apartment.composite[,
                   -which(names(apartment.composite) %in% 
                   c("name", "address", "state", "city", "rent", "sqft.regressed"))], 
                   apartment.composite)
+write.csv(sqft.fill.scaled, "fill_sqft.csv", row.names = FALSE)
 
 apartment.fillsqft <- model.matrix(sqft~. + bed_count:bath_count + beds:bath_count + 
                              traffic.level:busi.level + bed_count:zip + bath_count:zip +
@@ -1520,6 +1521,7 @@ The missing sqft is filled in using the sqft calculated on the model. It is a fo
 of interpolation since it's the same dataset.
 
 ```{r message=FALSE, error=FALSE, warning=FALSE}
+write.csv(apartments_raw_small, "full.csv", row.names = FALSE)
 filled_sqft <- predict(full.lasso.sqft, apartment.fillsqft[apartments_raw_small$sqft.regressed, 
                                                            selected.sqft])
 apartments_raw_small[apartments_raw_small$sqft.regressed, "sqft"] <- exp(filled_sqft)
@@ -1597,8 +1599,6 @@ rent_test_target <- log(apartment_rent[-rent_train_ind, "rent"])
 
 rent_train_export <- data.frame(apartment_rent.scaled[rent_train_ind, ])
 rent_test_export <- data.frame(apartment_rent.scaled[-rent_train_ind, ])
-write.csv(rent_train_export, "train.csv", row.names = FALSE)
-write.csv(rent_test_export, "test.csv", row.names = FALSE)
 
 rent_train <- as.matrix(rent_train)
 rent_test <- as.matrix(rent_test)
