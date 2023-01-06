@@ -14,6 +14,8 @@ require(caret)
 require(multcomp)
 require(broom)
 require(tidyverse)
+require(mgcv)
+require(genlasso)
 set.seed(93)
 ```
 
@@ -54,11 +56,19 @@ apartment_selected <- apartment_selected %>% mutate(shopping.num = as.factor(sho
                                                     cha.elt.mid.hi = as.factor(cha.elt.mid.hi),
                                                     priv.elt.mid.hi = as.factor(priv.elt.mid.hi),
                                                     sqft.regressed = as.factor(sqft.regressed))
-
+apartment_selected$neighborhood <- gsub("\\s+", "", apartment_selected$neighborhood)
+apartment_selected$neighborhood <- gsub("[^[:alnum:] ]", "", apartment_selected$neighborhood)
 ```
 
 ```{r}
 sapply(apartment_selected, function(x) {return(length(levels(x)))})
+```
+
+```{r}
+apartment_selected <- apartment_selected %>% select(sqft, zip, neighborhood, baths, beds, sqft.regressed, has.covered, has.garage, has.lot, has.street, rent) %>% mutate(zip = as.factor(zip), 
+                                                                                                                                                                         baths = as.factor(baths),
+                                                                                                                                                                         beds = as.factor(beds),
+                                                                                                                                                                         neighborhood = as.factor(neighborhood))
 ```
 
 
@@ -69,692 +79,123 @@ apartment_train <- apartment_selected[-apartment_test_idx, ]
 ```
 
 
-
-```{r}
-ggplot(apartment_train, aes(x = sqft, y = rent)) + geom_point() + geom_smooth(method = "gam")
-ggplot(apartment_train, aes(x = sqft, y = log(rent))) + geom_point() + geom_smooth(method = "gam")
-```
-
-
-```{r}
-apartment_train_sqft <- apartment_train %>% select(sqft, rent)
-knot_locations <- attr(ns(apartment_train$sqft, df = 100), "knots")
-sqft.mod <- lm(rent ~ ns(sqft, knots = knot_locations), apartment_train_sqft)
-apartment_train_score <- apartment_train_sqft %>% mutate(rent_resid = sqft.mod$residuals)
-summary(sqft.mod)
-plot(sqft.mod)
-```
-
-
-```{r}
-sqft.mod.log <- lm(log(rent) ~ ns(sqft, knots = knot_locations), apartment_train_sqft)
-apartment_train_score_log <- apartment_train_sqft %>% mutate(rent_resid = sqft.mod$residuals)
-summary(sqft.mod.log)
-plot(sqft.mod.log)
-```
-
-
-```{r}
-lasso_rent <- as.data.frame(model.matrix(rent ~ ns(sqft, knots = knot_locations), apartment_train)[, -1])
-cv.lasso.rent <- cv.glmnet(as.matrix(lasso_rent), apartment_train$rent, nfolds = 10)
-plot(cv.lasso.rent)
-```
-
-```{r}
-cv.lasso.logrent <- cv.glmnet(as.matrix(lasso_rent), log(apartment_train$rent), nfolds = 10)
-plot(cv.lasso.logrent)
-```
-
-```{r}
-rent.coef <- coef(cv.lasso.rent, s = 'lambda.1se')
-rent.coef
-```
-
-```{r}
-logrent.coef <- coef(cv.lasso.logrent, s = 'lambda.1se')
-logrent.coef
-```
-
-```{r}
-options(max.print = 1500)
-coef_sqft <- names(rent.coef[rent.coef[,1]!= 0, ])[-1]
-sqft_features <- as.data.frame(lasso_rent[, coef_sqft]) %>% mutate(rent = apartment_train$rent)
-sqft_mod <- lm(rent ~ ., sqft_features)
-summary(sqft_mod)
-plot(sqft_mod)
-```
-
-```{r}
-coef_logsqft <- names(logrent.coef[logrent.coef[,1]!= 0, ])[-1]
-logsqft_features <- as.data.frame(lasso_rent[, coef_logsqft]) %>% mutate(rent = apartment_train$rent)
-logsqft_mod <- lm(log(rent) ~ ., logsqft_features)
-summary(logsqft_mod)
-plot(logsqft_mod)
-```
-
 ```{r}
 apartment_train_shuffled <- apartment_train[sample(1:nrow(apartment_train)), ]
 apartment_folds <- groupKFold(1:nrow(apartment_train_shuffled), 10)
 ```
 
-
 ```{r}
-best_mses <- rep(0, 98)
-
-for(i in 3:100){
-  mses <- rep(Inf, 10)
-  j <- 1
-  for(fold in apartment_folds) {
-    fold_test <- apartment_train_shuffled[fold, ]
-    fold_train <- apartment_train_shuffled[-fold, ]
-    knot_locations <- attr(ns(fold_train$sqft, df = i), "knots")
-    spline.mod <- lm(log(rent) ~ ns(sqft, knots = knot_locations), fold_train)
-    mse.sqft <- mean((log(fold_test$rent) - predict(spline.mod, fold_test))^2)
-    mses[j] <- mse.sqft
-    j <- j + 1
-  }
-  best_mses[i - 2] <- mean(mses)
-}
-```
-
-```{r}
-mse_df <- data.frame(df = 3:100, mse = best_mses)
-ggplot(mse_df, aes(x = df, y = mse)) + geom_line()
+ggplot(apartment_train, aes(x = sqft, y = rent)) + geom_point() + geom_smooth(method = "gam")
+ggplot(apartment_train, aes(x = sqft, y = log(rent))) + geom_point() + geom_smooth(method = "gam")
+ggplot(apartment_train, aes(x = log(sqft), y = rent)) + geom_point() + geom_smooth(method = "gam")
+ggplot(apartment_train, aes(x = log(sqft), y = log(rent))) + geom_point() + geom_smooth(method = "gam")
 ```
 
 
 ```{r}
-which(best_mses == min(best_mses)) + 2
+full.mod <- lm(rent ~ ., apartment_train)
+summary(full.mod)
+plot(full.mod)
 ```
 
 ```{r}
-knot_locations <- attr(ns(fold_train$sqft, df = 64), "knots")
-logsqft_mod <- lm(log(rent) ~ ns(sqft, knots = knot_locations), apartment_train)
-summary(logsqft_mod)
-plot(logsqft_mod)
-```
-
-
-```{r}
-apartment_train_beds <- apartment_train %>% select(beds) %>% mutate(resid = sqft.mod.log$residuals) %>% mutate(beds = as.factor(beds))
-ggplot(apartment_train_beds, aes(x = beds, y = resid)) + geom_boxplot(aes(color = beds))
+full.mod.log <- lm(log(rent) ~ ., apartment_train)
+summary(full.mod.log)
+plot(full.mod.log)
 ```
 
 ```{r}
-apartment_train <- apartment_train %>% mutate(beds1 = beds >= 1,
-                                                      beds2 = beds >= 2,
-                                                      beds3 = beds >= 3,
-                                                      beds4 = beds >= 4) %>% select(-beds)
-apartment_train_beds <- apartment_train %>% select(beds1, 
-                                                   beds2, 
-                                                   beds3, 
-                                                   beds4) %>% mutate(resid = sqft.mod.log$residuals)
-```
-
-```{r}
-bed.mod.resid <- lm(resid ~ ., apartment_train_beds)
-summary(bed.mod.resid)
-```
-
-```{r}
-apartment_train_bath <- apartment_train %>% select(baths) %>% mutate(resid = bed.mod.resid$residuals, baths = as.factor(baths))
-ggplot(apartment_train_bath, aes(x = baths, y = resid)) + geom_boxplot(aes(color = baths))
-```
-
-```{r}
-apartment_train <- apartment_train %>% mutate(
-                                                      baths1.5 = baths >= 1.5,
-                                                      baths2 = baths >= 2,
-                                                      baths2.5 = baths >= 2.5,
-                                                      baths3 = baths >= 3,
-                                                      baths3.5 = baths >= 3.5,
-                                                      baths4 = baths >= 4
-                                                      ) %>% select(-baths)
-apartment_train_bath <- apartment_train %>% select(
-                                                       baths1.5, 
-                                                       baths2, 
-                                                       baths2.5, 
-                                                       baths3, 
-                                                       baths3.5, 
-                                                       baths4) %>% mutate(resid = bed.mod.resid$residuals)
-```
-
-```{r}
-bath.mod.resid <- lm(resid ~ ., apartment_train_bath)
-summary(bath.mod.resid)
-```
-
-```{r}
-apartment_train_zip <- apartment_train %>% select(zip) %>% mutate(resid = bath.mod.resid$residuals)
-summary(lm(resid ~ zip - 1, apartment_train_zip))
-```
-
-```{r}
-lasso_zip <- as.data.frame(model.matrix(resid ~ zip - 1, apartment_train_zip))
-cv.lasso.zip <- cv.glmnet(as.matrix(lasso_zip), apartment_train_zip$resid, nfolds = 10, intercept=FALSE)
-plot(cv.lasso.zip)
-```
-
-```{r}
-zip.coef <- coef(cv.lasso.zip, s = 'lambda.1se')
-zip.coef
-```
-
-```{r}
-coef_zip <- names(zip.coef[zip.coef[,1]!= 0, ])
-nonzero_zip <- substring(coef_zip, 4)
-nonzero_zip
+full.mod.log.2 <- lm(log(rent) ~ . - sqft + log(sqft), apartment_train)
+summary(full.mod.log.2)
+plot(full.mod.log.2)
 ```
 
 
-```{r}
-apartment_train <- apartment_train %>% mutate(zip = case_when(zip %in% nonzero_zip ~ as.character(zip), TRUE ~ "Z0")) %>% mutate(zip = as.factor(zip))
-apartment_train$zip <- relevel(apartment_train$zip, "Z0")
+```{r warning=FALSE}
+gam.mod.log <- gam(log(rent) ~ s(log(sqft), k = 601, m = 2) +  neighborhood + zip + baths + beds + sqft.regressed + has.covered + has.garage + has.lot + has.street, data = apartment_train)
+gam.check(gam.mod.log)
+summary(gam.mod.log)
 ```
 
 ```{r}
-zip.agg.df <- aggregate(rent ~ zip, apartment_train, FUN=length)
-colnames(zip.agg.df) <- c("zip", "count")
-```
-
-
-```{r}
-apartment_train_zip <- apartment_train %>% select(zip) %>% mutate(resid = bath.mod.resid$residuals)
-zip.mod <- lm(resid ~ zip, apartment_train_zip)
-summary(zip.mod)
-```
-```{r}
-zip.agg.df %>% filter(count < 5)
-```
-
-
-```{r}
-zip.removal <- as.vector(zip.agg.df %>% filter(count < 5) %>% mutate(zip = as.character(zip)) %>% select(zip))$zip
-apartment_train <- apartment_train %>% mutate(zip = case_when(zip %in% zip.removal ~ "Z0", TRUE ~ as.character(zip))) %>% mutate(zip = as.factor(zip))
-apartment_train$zip <- relevel(apartment_train$zip, "Z0")
-```
-
-
-```{r}
-mod.df.1 <- apartment_train %>% select(zip, beds1, beds2, beds3, beds4, baths1.5, baths2, baths2.5, baths3, baths3.5, baths4, sqft, rent)
-mod.df.1 <- as.data.frame(model.matrix(log(rent) ~ . + ns(sqft, knots = knot_locations) - sqft, mod.df.1)[, -1]) %>% mutate(rent = apartment_train$rent)
-full.mod.1 <- lm(log(rent) ~ ., mod.df.1)
-summary(full.mod.1)
-plot(full.mod.1)
+plot(gam.mod.log)
 ```
 
 ```{r}
-fitControl <- trainControl(method = "cv",
-                           number = 10)
-rent.train.1 <- train(log(rent) ~ ., data = mod.df.1, 
-                 method = "lm", 
-                 trControl = fitControl)
-rent.train.1
-```
+prep_fuse_lasso_mat <- function(apartment_train_ord) {
+  apartment_train.mat <- as.data.frame(model.matrix(rent ~ . + log(sqft) - sqft, apartment_train_ord)[, -1]) %>% mutate(rent = apartment_train_ord$rent)
+  max.logsqft <- max(apartment_train.mat$`log(sqft)`)
+  min.logsqft <- min(apartment_train.mat$`log(sqft)`)
+  qlogsqft <- (apartment_train.mat$`log(sqft)` - min.logsqft) / (max.logsqft - min.logsqft)
+  apartment_train.mat$qlogsqft <- qlogsqft
+  apartment_train.mat <- apartment_train.mat %>% select(-`log(sqft)`)
+  full.mod.varrank <- lm(log(rent) ~ ., apartment_train.mat)
+  
+  apartment_train.mat <- as.data.frame(model.matrix(rent ~ . - sqft, apartment_train_ord)) %>% mutate(rent = apartment_train_ord$rent)
+  zip_coefficients <- full.mod.varrank$coefficients[names(full.mod.varrank$coefficients)[grepl("zip", names(full.mod.varrank$coefficients), fixed = TRUE)]]
+  zip_na_idx <- is.na(zip_coefficients)
+  zip_nna <- zip_coefficients[!zip_na_idx]
+  zip_na <- zip_coefficients[zip_na_idx]
+  apartment_train_lasso <- data.frame(intercept = apartment_train.mat[, 1])
+  apartment_train_lasso <- cbind(apartment_train_lasso, apartment_train.mat[, names(zip_na)])
+  gen.lasso.edges <- cbind(rep(1, length(zip_na)), 2:(1 + length(zip_na)))
 
-```{r}
-apartment_train_neighborhood <- apartment_train %>% select(neighborhood) %>% mutate(resid = full.mod.1$residuals)
-summary(lm(resid ~ neighborhood - 1, apartment_train_neighborhood))
-```
+  zip_nna <- zip_nna[order(zip_nna)]
+  gen.lasso.edges.temp <- cbind(rep(1, length(zip_nna)), (1:length(zip_nna)) + ncol(apartment_train_lasso))
+  gen.lasso.edges <- rbind(gen.lasso.edges, gen.lasso.edges.temp)
+  gen.lasso.edges.temp <- cbind(ncol(apartment_train_lasso) + (1:(length(zip_nna) - 1)), ncol(apartment_train_lasso) + (2:length(zip_nna)))
+  gen.lasso.edges <- rbind(gen.lasso.edges, gen.lasso.edges.temp)
+  apartment_train_lasso <- cbind(apartment_train_lasso, apartment_train.mat[, names(zip_nna)])
+  
+  neighbor_coefficients <- full.mod.varrank$coefficients[names(full.mod.varrank$coefficients)[grepl("neighborhood", names(full.mod.varrank$coefficients), fixed = TRUE)]]
+  neighbor_na_idx <- is.na(neighbor_coefficients)
+  neighbor_nna <- neighbor_coefficients[!neighbor_na_idx]
+  neighbor_na <- neighbor_coefficients[neighbor_na_idx]
+  gen.lasso.edges.temp <- cbind(rep(1, length(neighbor_na)), (1:length(neighbor_na)) + ncol(apartment_train_lasso))
+  gen.lasso.edges <- rbind(gen.lasso.edges, gen.lasso.edges.temp)
+  apartment_train_lasso <- cbind(apartment_train_lasso, apartment_train.mat[, names(neighbor_na)])
 
-```{r}
-lasso_neighborhood <- as.data.frame(model.matrix(resid ~ neighborhood - 1, apartment_train_neighborhood))
-cv.lasso.neighborhood <- cv.glmnet(as.matrix(lasso_neighborhood), apartment_train_neighborhood$resid, nfolds = 10, intercept=FALSE)
-plot(cv.lasso.neighborhood)
-```
-
-```{r}
-neighborhood.coef <- coef(cv.lasso.neighborhood, s = 'lambda.1se')
-coef_neighborhood <- names(neighborhood.coef[neighborhood.coef[,1]!= 0, ])
-nonzero_neigh <- substring(coef_neighborhood, 13)
-nonzero_neigh
-```
-
-```{r}
-apartment_train <- apartment_train %>% mutate(neighborhood = case_when(neighborhood %in% nonzero_neigh ~ as.character(neighborhood), TRUE ~ "N0")) %>% mutate(neighborhood = as.factor(neighborhood))
-apartment_train$neighborhood <- relevel(apartment_train$neighborhood, "N0")
-```
-
-```{r}
-apartment_train_neighborhood <- apartment_train %>% select(neighborhood) %>% mutate(resid = full.mod.1$residuals)
-aggregate(resid ~ neighborhood, apartment_train_neighborhood, FUN=length)
-neighbor.mod <- lm(resid ~ neighborhood, apartment_train_neighborhood)
-summary(neighbor.mod)
-```
-
-
-```{r}
-neighbor.removal <- c("Belmont Heights", "Cicero", "Chinatown", "Dolton", "Evergreen Park", "Fernwood", "Hegewisch", 
-                      "Oak Lawn", "Park Ridge", "Scottsdale", "Washington Heights")
-apartment_train <- apartment_train %>% mutate(neighborhood = case_when(neighborhood %in% neighbor.removal ~ "N0", TRUE ~ as.character(neighborhood))) %>% mutate(neighborhood = as.factor(neighborhood))
-apartment_train$neighborhood <- relevel(apartment_train$neighborhood, "N0")
-apartment_train_neighborhood <- apartment_train %>% select(neighborhood) %>% mutate(resid = full.mod.1$residuals)
-```
-
-```{r}
-aggregate(resid ~ neighborhood, apartment_train_neighborhood, FUN=length)
-```
-
-```{r}
-mod.df.2 <- apartment_train %>% select(zip, beds1, beds2, beds3, beds4, baths1.5, baths2, baths2.5, baths3, baths3.5, baths4, sqft, neighborhood, rent)
-mod.df.2 <- as.data.frame(model.matrix(log(rent) ~ . + ns(sqft, knots = knot_locations) - sqft, mod.df.2)[, -1]) %>% mutate(rent = apartment_train$rent)
-full.mod.2 <- lm(log(rent) ~ ., mod.df.2)
-summary(full.mod.2)
-plot(full.mod.2)
-```
-
-```{r}
-rent.train.2 <- train(log(rent) ~ ., data = mod.df.2, 
-                 method = "lm", 
-                 trControl = fitControl)
-rent.train.2
-```
-
-```{r}
-apartment_train_parking <- apartment_train %>% select(has.garage, has.covered, has.lot, has.street) %>% mutate(resid = full.mod.2$residuals)
-ggplot(apartment_train_parking, aes(x = has.garage, y = resid)) + geom_boxplot()
-ggplot(apartment_train_parking, aes(x = has.covered, y = resid)) + geom_boxplot()
-ggplot(apartment_train_parking, aes(x = has.lot, y = resid)) + geom_boxplot()
-ggplot(apartment_train_parking, aes(x = has.street, y = resid)) + geom_boxplot()
-```
-
-```{r}
-parking.mod <- lm(resid ~ ., apartment_train_parking)
-summary(parking.mod)
-```
-
-```{r}
-mod.df.3 <- apartment_train %>% select(zip, beds1, beds2, beds3, beds4, baths2, baths2.5, baths3.5, baths4, neighborhood, 
-                                       has.garage, has.covered, has.lot, has.street, sqft, rent)
-mod.df.3 <- as.data.frame(model.matrix(log(rent) ~ . + ns(sqft, knots = knot_locations) - sqft, mod.df.3)[, -1]) %>% mutate(rent = apartment_train$rent)
-full.mod.3 <- lm(log(rent) ~ ., mod.df.3)
-summary(full.mod.3)
-plot(full.mod.3)
-```
-
-```{r}
-rent.train.3 <- train(log(rent) ~ ., data = mod.df.3, 
-                 method = "lm", 
-                 trControl = fitControl)
-rent.train.3
-```
-
-```{r}
-apartment_train_zip_beds <- apartment_train %>% select(zip, beds1, beds2, beds3, beds4) %>% mutate(resid = full.mod.3$residuals) %>% 
-  mutate(beds1 = as.factor(beds1), beds2 = as.factor(beds2), beds3 = as.factor(beds3), beds4 = as.factor(beds4))
-lasso_zip_beds <- as.data.frame(model.matrix(resid ~ beds1*zip + beds2*zip + beds3*zip + beds4*zip, apartment_train_zip_beds))[,114:295]
-cv.lasso.zip_beds <- cv.glmnet(as.matrix(lasso_zip_beds), apartment_train_zip_beds$resid, nfolds = 10)
-plot(cv.lasso.zip_beds)
-```
-
-```{r}
-zip_beds.coef <- coef(cv.lasso.zip_beds, s = 'lambda.1se')
-coef_zip_beds <- names(zip_beds.coef[zip_beds.coef[,1]!= 0, ])
-coef_zip_beds
-```
-
-```{r}
-nrow(apartment_train %>% filter(beds4, zip == "60604"))
-nrow(apartment_train %>% filter(beds4, zip == "60605"))
-nrow(apartment_train %>% filter(beds4, zip == "60607"))
-nrow(apartment_train %>% filter(beds4, zip == "60642"))
-```
-
-
-```{r}
-mod.df.4 <- apartment_train %>% select(zip, beds1, beds2, beds3, beds4, baths2, baths2.5, baths3.5, baths4, neighborhood, 
-                                       has.garage, has.covered, has.lot, has.street, sqft, rent)
-mod.df.4 <- as.data.frame(model.matrix(log(rent) ~ . + ns(sqft, knots = knot_locations) - sqft, mod.df.4)[, -1]) %>% mutate(rent = apartment_train$rent)
-mod.df.4 <- cbind(mod.df.4, lasso_zip_beds[, coef_zip_beds[-1]])
-full.mod.4 <- lm(log(rent) ~ ., mod.df.4)
-summary(full.mod.4)
-plot(full.mod.4)
-```
-
-
-```{r}
-anova(full.mod.3, full.mod.4)
-```
-
-```{r}
-rent.train.4 <- train(log(rent) ~ ., data = mod.df.4, 
-                 method = "lm", 
-                 trControl = fitControl)
-rent.train.4
-```
-
-```{r}
-bptest(full.mod.4)
-dwtest(full.mod.4)
-```
-
-```{r}
-lillie.test(full.mod.4$residuals)
-```
-
-```{r}
-true_train_resids <- apartment_train$rent - exp(full.mod.4$fitted.values)
-train_mae <- mean(abs(true_train_resids))
-train_rmse <- sqrt(mean(true_train_resids^2))
-train_rmse
-train_mae
-```
-
-
-```{r}
-apartment_test <- apartment_test %>% mutate(beds1 = beds >= 1,
-                                                      beds2 = beds >= 2,
-                                                      beds3 = beds >= 3,
-                                                      beds4 = beds >= 4) %>% select(-beds)
-apartment_test <- apartment_test %>% mutate(
-                                                      baths1.5 = baths >= 1.5,
-                                                      baths2 = baths >= 2,
-                                                      baths2.5 = baths >= 2.5,
-                                                      baths3 = baths >= 3,
-                                                      baths3.5 = baths >= 3.5,
-                                                      baths4 = baths >= 4
-                                                      ) %>% select(-baths)
-apartment_test <- apartment_test %>% mutate(zip = as.character(zip))
-
-apartment_test <- apartment_test %>% mutate(zip = case_when(zip %in% nonzero_zip ~ as.character(zip), TRUE ~ "Z0")) %>% mutate(zip = as.factor(zip))
-apartment_test$zip <- relevel(apartment_test$zip, "Z0")
-apartment_test <- apartment_test %>% mutate(zip = case_when(zip %in% zip.removal ~ "Z0", TRUE ~ as.character(zip))) %>% mutate(zip = as.factor(zip))
-apartment_test$zip <- relevel(apartment_test$zip, "Z0")
-
-apartment_test <- apartment_test %>% mutate(neighborhood = case_when(neighborhood %in% nonzero_neigh ~ as.character(neighborhood), TRUE ~ "N0")) %>% mutate(neighborhood = as.factor(neighborhood))
-apartment_test$neighborhood <- relevel(apartment_test$neighborhood, "N0")
-apartment_test <- apartment_test %>% mutate(neighborhood = case_when(neighborhood %in% neighbor.removal ~ "N0", TRUE ~ as.character(neighborhood))) %>% mutate(neighborhood = as.factor(neighborhood))
-apartment_test$neighborhood <- relevel(apartment_test$neighborhood, "N0")
-
-lasso_test_rent <- as.data.frame(model.matrix(rent ~ ns(sqft, knots = knot_locations), apartment_test)[, -1])
-lasso_zip_beds_test <- as.data.frame(model.matrix(rent ~ beds1*zip + beds2*zip + beds3*zip + beds4*zip, apartment_test))[, 114:295]
-
-```
-
-```{r}
-test.df.4 <- apartment_test %>% select(zip, beds1, beds2, beds3, beds4, baths1.5, baths2, baths2.5, baths3, baths3.5, baths4, neighborhood, 
-                                       has.garage, has.covered, has.lot, has.street, rent)
-test.df.4 <- as.data.frame(model.matrix(rent ~ ., test.df.4)[, -1])
-test.df.4 <- cbind(test.df.4, as.data.frame(lasso_test_rent))
-test.df.4 <- cbind(test.df.4, lasso_zip_beds_test[, coef_zip_beds[-1]])
-```
-
-
-```{r}
-test_output <- exp(predict(full.mod.4, test.df.4))
-test_resid <- apartment_test$rent - test_output
-test_mae <- mean(abs(test_resid))
-test_mse <- mean(test_resid^2)
-test_rmse <- sqrt(test_mse)
-test_rmse
-test_mae
-```
-
-
-```{r}
-apartment_full <- apartment_full %>% mutate(beds1 = beds >= 1,
-                                                      beds2 = beds >= 2,
-                                                      beds3 = beds >= 3,
-                                                      beds4 = beds >= 4) %>% select(-beds)
-apartment_full <- apartment_full %>% mutate(
-                                                      baths1.5 = baths >= 1.5,
-                                                      baths2 = baths >= 2,
-                                                      baths2.5 = baths >= 2.5,
-                                                      baths3 = baths >= 3,
-                                                      baths3.5 = baths >= 3.5,
-                                                      baths4 = baths >= 4
-                                                      ) %>% select(-baths)
-apartment_full <- apartment_full %>% mutate(zip = as.character(zip))
-
-apartment_full <- apartment_full %>% mutate(zip = case_when(zip %in% nonzero_zip ~ as.character(zip), TRUE ~ "Z0")) %>% mutate(zip = as.factor(zip))
-apartment_full$zip <- relevel(apartment_full$zip, "Z0")
-apartment_full <- apartment_full %>% mutate(zip = case_when(zip %in% zip.removal ~ "Z0", TRUE ~ as.character(zip))) %>% mutate(zip = as.factor(zip))
-apartment_full$zip <- relevel(apartment_full$zip, "Z0")
-
-apartment_full <- apartment_full %>% mutate(neighborhood = case_when(neighborhood %in% nonzero_neigh ~ as.character(neighborhood), TRUE ~ "N0")) %>% mutate(neighborhood = as.factor(neighborhood))
-apartment_full$neighborhood <- relevel(apartment_full$neighborhood, "N0")
-apartment_full <- apartment_full %>% mutate(neighborhood = case_when(neighborhood %in% neighbor.removal ~ "N0", TRUE ~ as.character(neighborhood))) %>% mutate(neighborhood = as.factor(neighborhood))
-apartment_full$neighborhood <- relevel(apartment_full$neighborhood, "N0")
-
-lasso_full_rent <- as.data.frame(model.matrix(rent ~ ns(sqft, knots = knot_locations), apartment_full)[, -1])
-lasso_zip_beds_full <- as.data.frame(model.matrix(rent ~ beds1*zip + beds2*zip + beds3*zip + beds4*zip, apartment_full))[, 114:295]
-
-full.df <- apartment_full %>% select(zip, beds1, beds2, beds3, beds4, baths1.5, baths2, baths2.5, baths3, baths3.5, baths4, neighborhood, 
-                                       has.garage, has.covered, has.lot, has.street, rent)
-full.df <- as.data.frame(model.matrix(rent ~ ., full.df)[, -1])
-full.df <- cbind(full.df, as.data.frame(lasso_full_rent))
-full.df <- cbind(full.df, lasso_zip_beds_full[, coef_zip_beds[-1]]) %>% mutate(rent = apartment_full$rent)
-
-full.mod.5 <- lm(log(rent) ~ ., full.df)
-summary(full.mod.5)
-plot(full.mod.5)
-```
-
-```{r}
-rent.train.5 <- train(log(rent) ~ ., data = full.df, 
-                 method = "lm", 
-                 trControl = fitControl)
-rent.train.5
-```
-```{r}
-true_resids <- full.df$rent - exp(full.mod.5$fitted.values)
-full_mae <- mean(abs(true_resids))
-full_rmse <- sqrt(mean(true_resids^2))
-full_rmse
-full_mae
-```
-
-```{r}
-contrast_base <- rep(F, length(full.mod.5$coefficients))
-contrast_vals <- rep(0, length(full.mod.5$coefficients))
-for(i in 1:length(contrast_base)) {
-  if(grepl("knot_locations", names(full.mod.5$coefficients[i]), fixed=TRUE)) {
-    contrast_base[i] = T
-  }
+  gen.lasso.edges.temp <- cbind(rep(1, length(neighbor_nna)), (1:length(neighbor_nna)) + ncol(apartment_train_lasso))
+  gen.lasso.edges <- rbind(gen.lasso.edges, gen.lasso.edges.temp)
+  gen.lasso.edges.temp <- cbind(ncol(apartment_train_lasso) + (1:(length(neighbor_nna) - 1)), ncol(apartment_train_lasso) + (2:length(neighbor_nna)))
+  gen.lasso.edges <- rbind(gen.lasso.edges, gen.lasso.edges.temp)
+  apartment_train_lasso <- cbind(apartment_train_lasso, apartment_train.mat[, names(neighbor_nna)])
+  
+  lasso.colnames <- c(names(zip_na), names(zip_nna), names(neighbor_na), names(neighbor_nna))
+  colnames(apartment_train_lasso) <- lasso.colnames
+  lasso.unincl <- names(full.mod.varrank$coefficients)[!names(full.mod.varrank$coefficients) %in% colnames(apartment_train_lasso)]
+  lasso.unincl <- lasso.unincl[-c(1, length(lasso.unincl))]
+  gen.lasso.edges.temp <- cbind(rep(1, length(lasso.unincl)), (1:length(lasso.unincl)) + ncol(apartment_train_lasso))
+  gen.lasso.edges <- rbind(gen.lasso.edges, gen.lasso.edges.temp)
+  apartment_train_lasso <- cbind(apartment_train_lasso, apartment_train.mat[, lasso.unincl])
+  apartment_train_lasso$qlogsqft <- qlogsqft
+  return(list(X = apartment_train_lasso, graph = gen.lasso.edges))
 }
 ```
 
 
 ```{r}
-max(apartment_full$sqft)
-min(apartment_full$sqft)
+apartment_train_ord <- apartment_train %>% mutate(beds = as.numeric(beds), baths = as.numeric(baths)) %>% mutate(beds1 = beds >= 1, beds2 = beds >= 2, beds3 = beds >=3, beds4 = beds >=4) %>%
+                                           mutate(baths1.5 = baths >= 1.5, baths2 = baths >= 2, baths2.5 = baths >= 2.5, baths3 = baths >= 3, baths3.5 = baths >= 3.5, baths4 = baths >= 4)
+apartment_train_ord <- apartment_train_ord %>% select(-beds, -baths)
+
 ```
 
 
 ```{r}
-sqft_samples <- 201:max(apartment_full$sqft)
-sqft.sample.df <- data.frame(sqft=sqft_samples, proportion=rep(0, length(sqft_samples)), 
-                             low=rep(0, length(sqft_samples)), 
-                             high=rep(0, length(sqft_samples)))
-sqft.basis <- as.data.frame(model.matrix(sqft ~ ns(sqft, knots = knot_locations), sqft.sample.df)[, -1])
-sqft.basis$sqft <- sqft_samples
-
-for(i in sqft_samples) {
-  contrast_vals[contrast_base] <- c(t(sqft.basis[sqft.basis$sqft == i, 1:64]))
-  if(sum(contrast_vals) == 0) {
-    next
-  }
-  full.sqft.comp <- glht(full.mod.5, linfct = rbind("sqft" = contrast_vals))
-  conf.table <- as.data.frame(tidy(full.sqft.comp, conf.int = TRUE, conf.level = 0.95))
-  sqft.sample.df[sqft.sample.df$sqft == i, c("proportion", "low", "high")] <- conf.table[1, c("estimate", "conf.low", "conf.high")]
-}
-head(sqft.sample.df)
-```
-
-```{r}
-sqft.sample.df <- sqft.sample.df %>% mutate(proportion = exp(proportion), low = exp(low), high = exp(high))
+apartment_fuse_lasso <- prep_fuse_lasso_mat(apartment_train_ord)
+penal_graph <- graph_from_edgelist(apartment_fuse_lasso$graph, directed = FALSE)
+penal_graph <- add_vertices(penal_graph, 1)
+fuse_lasso_path <- fusedlasso(log(apartment_train_ord$rent), X = as.matrix(apartment_fuse_lasso$X), graph = penal_graph)
 ```
 
 
 ```{r}
-ggplot(sqft.sample.df, aes(x = sqft, y = proportion)) + geom_line() + geom_ribbon(aes(ymin = low, ymax = high), alpha = 0.2) + ggtitle("Proportional change in rent by sqft") + xlab("sqft") + ylab("Ratio to base rent")
-```
-
-```{r}
-ggplot(apartment_train, aes(x = sqft)) + geom_histogram()
-knot_locations
-```
-
-```{r}
-mod.df.part <- apartment_train %>% select(zip, beds1, beds2, beds3, beds4, baths2, baths1.5, baths2.5, baths3, baths3.5, baths4, neighborhood, 
-                                       has.garage, has.covered, has.lot, has.street, rent)
-mod.df.part <- cbind(mod.df.part, lasso_zip_beds[, coef_zip_beds[-1]])
-part.mod <- lm(log(rent) ~ ., mod.df.part)
-summary(part.mod)
+plot(fuse_lasso_path)
 ```
 
 
 ```{r}
-apartment_train_concentrated <- apartment_train %>% mutate(resid = part.mod$residuals)
+
 ```
 
-
-```{r}
-ggplot(apartment_train_concentrated, aes(x = sqft, y = resid)) + geom_point() + geom_smooth(method = "gam")
-```
-
-```{r}
-apartment_train_shuffled <- apartment_train_concentrated[sample(1:nrow(apartment_train_concentrated)), ]
-apartment_folds <- groupKFold(1:nrow(apartment_train_shuffled), 10)
-```
-
-
-```{r}
-best_mses <- rep(0, 69)
-
-for(i in 2:70){
-  mses <- rep(Inf, 10)
-  j <- 1
-  for(fold in apartment_folds) {
-    fold_test <- apartment_train_shuffled[fold, ]
-    fold_train <- apartment_train_shuffled[-fold, ]
-    knot_locations <- attr(ns(fold_train$sqft, df = i), "knots")
-    spline.mod <- lm(resid ~ bs(sqft, knots = knot_locations), fold_train)
-    mse.sqft <- mean((fold_test$resid - predict(spline.mod, fold_test))^2)
-    mses[j] <- mse.sqft
-    j <- j + 1
-  }
-  best_mses[i - 1] <- mean(mses)
-}
-```
-
-```{r}
-mse_df <- data.frame(df = 2:70, mse = best_mses)
-ggplot(mse_df, aes(x = df, y = mse)) + geom_line()
-```
-
-```{r}
-which(best_mses == min(best_mses)) + 1
-attr(ns(fold_train$sqft, df = 3), "knots")
-```
-
-```{r}
-knot_locations <- attr(ns(apartment_train$sqft, df = 3), "knots")
-```
-
-```{r}
-mod.df.6 <- apartment_train %>% select(zip, beds1, beds2, beds3, beds4, baths2, baths2.5, baths3.5, baths4, neighborhood, 
-                                       has.garage, has.covered, has.lot, has.street, sqft, rent)
-mod.df.6 <- as.data.frame(model.matrix(log(rent) ~ . + ns(sqft, knots = knot_locations) - sqft, mod.df.6)[, -1]) %>% mutate(rent = apartment_train$rent)
-mod.df.6 <- cbind(mod.df.6, lasso_zip_beds[, coef_zip_beds[-1]])
-full.mod.6 <- lm(log(rent) ~ ., mod.df.6)
-summary(full.mod.6)
-plot(full.mod.6)
-```
-
-```{r}
-rent.train.6 <- train(log(rent) ~ ., data = mod.df.6, 
-                 method = "lm", 
-                 trControl = fitControl)
-rent.train.6
-```
-
-```{r}
-lasso_test_rent <- as.data.frame(model.matrix(rent ~ ns(sqft, knots = knot_locations), apartment_test)[, -1])
-lasso_zip_beds_test <- as.data.frame(model.matrix(rent ~ beds1*zip + beds2*zip + beds3*zip + beds4*zip, apartment_test))[, 114:295]
-```
-
-```{r}
-test.df.6 <- apartment_test %>% select(zip, beds1, beds2, beds3, beds4, baths1.5, baths2, baths2.5, baths3, baths3.5, baths4, neighborhood, 
-                                       has.garage, has.covered, has.lot, has.street, rent)
-test.df.6 <- as.data.frame(model.matrix(rent ~ ., test.df.6)[, -1])
-test.df.6 <- cbind(test.df.6, as.data.frame(lasso_test_rent))
-test.df.6 <- cbind(test.df.6, lasso_zip_beds_test[, coef_zip_beds[-1]])
-```
-
-
-```{r}
-test_output <- exp(predict(full.mod.6, test.df.6))
-test_resid <- apartment_test$rent - test_output
-test_mae <- mean(abs(test_resid))
-test_mse <- mean(test_resid^2)
-test_rmse <- sqrt(test_mse)
-test_rmse
-test_mae
-```
-
-```{r}
-lasso_full_rent <- as.data.frame(model.matrix(rent ~ ns(sqft, knots = knot_locations), apartment_full)[, -1])
-lasso_zip_beds_full <- as.data.frame(model.matrix(rent ~ beds1*zip + beds2*zip + beds3*zip + beds4*zip, apartment_full))[, 114:295]
-
-full.df <- apartment_full %>% select(zip, beds1, beds2, beds3, beds4, baths1.5, baths2, baths2.5, baths3, baths3.5, baths4, neighborhood, 
-                                       has.garage, has.covered, has.lot, has.street, rent)
-full.df <- as.data.frame(model.matrix(rent ~ ., full.df)[, -1])
-full.df <- cbind(full.df, as.data.frame(lasso_full_rent))
-full.df <- cbind(full.df, lasso_zip_beds_full[, coef_zip_beds[-1]]) %>% mutate(rent = apartment_full$rent)
-
-full.mod.7 <- lm(log(rent) ~ ., full.df)
-summary(full.mod.7)
-plot(full.mod.7)
-```
-
-```{r}
-rent.train.7 <- train(log(rent) ~ ., data = full.df, 
-                 method = "lm", 
-                 trControl = fitControl)
-rent.train.7
-```
-
-```{r}
-true_resids <- full.df$rent - exp(full.mod.5$fitted.values)
-full_mae <- mean(abs(true_resids))
-full_rmse <- sqrt(mean(true_resids^2))
-full_rmse
-full_mae
-```
-
-```{r}
-contrast_base <- rep(F, length(full.mod.7$coefficients))
-contrast_vals <- rep(0, length(full.mod.7$coefficients))
-for(i in 1:length(contrast_base)) {
-  if(grepl("knot_locations", names(full.mod.7$coefficients[i]), fixed=TRUE)) {
-    contrast_base[i] = T
-  }
-}
-```
-
-
-
-```{r}
-sqft_samples <- 201:max(apartment_full$sqft)
-sqft.sample.df <- data.frame(sqft=sqft_samples, proportion=rep(0, length(sqft_samples)), 
-                             low=rep(0, length(sqft_samples)), 
-                             high=rep(0, length(sqft_samples)))
-sqft.basis <- as.data.frame(model.matrix(sqft ~ ns(sqft, knots = knot_locations), sqft.sample.df)[, -1])
-sqft.basis$sqft <- sqft_samples
-
-for(i in sqft_samples) {
-  contrast_vals[contrast_base] <- c(t(sqft.basis[sqft.basis$sqft == i, 1:3]))
-  if(sum(contrast_vals) == 0) {
-    next
-  }
-  full.sqft.comp <- glht(full.mod.7, linfct = rbind("sqft" = contrast_vals))
-  conf.table <- as.data.frame(tidy(full.sqft.comp, conf.int = TRUE, conf.level = 0.95))
-  sqft.sample.df[sqft.sample.df$sqft == i, c("proportion", "low", "high")] <- conf.table[1, c("estimate", "conf.low", "conf.high")]
-}
-head(sqft.sample.df)
-```
-
-```{r}
-ggplot(sqft.sample.df, aes(x = sqft, y = exp(proportion))) + geom_line() + geom_ribbon(aes(ymin = exp(low), ymax = exp(high)), alpha = 0.2) + ggtitle("Proportional change in rent by sqft") + xlab("sqft") + ylab("Ratio to base rent")
-```
