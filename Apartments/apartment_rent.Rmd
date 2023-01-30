@@ -16,7 +16,20 @@ require(broom)
 require(tidyverse)
 require(mgcv)
 require(genlasso)
+require(foreach)
+require(doParallel)
+require(geojsonio)
+require(sp)
+require(spdep)
+require(gratia)
+require(visreg)
 set.seed(93)
+n.cores <- 10
+cluster <- parallel::makeCluster(
+  n.cores, 
+  type = "FORK"
+)
+doParallel::registerDoParallel(cl = cluster)
 ```
 
 
@@ -26,8 +39,9 @@ head(apartment_full)
 ```
 
 ```{r}
-apartment_selected <- apartment_full %>% select(-address, -city, -name, -state, -bath_count, -bed_count)
-apartment_selected <- apartment_selected %>% mutate(shopping.num = as.factor(shopping.num), zip = as.factor(zip),
+apartment_selected <- apartment_full %>% select(-address, -city, -name, -state, -bath_count, -bed_count, -neighborhood)
+apartment_selected <- apartment_selected %>% mutate(shopping.num = as.factor(shopping.num),
+                                                    zip = as.character(zip),
                                                     count.pub.high = as.factor(count.pub.high), 
                                                     pub.elt.mid = as.factor(pub.elt.mid), 
                                                     priv.elt.mid = as.factor(priv.elt.mid),
@@ -40,7 +54,6 @@ apartment_selected <- apartment_selected %>% mutate(shopping.num = as.factor(sho
                                                     has.garage = as.factor(has.garage),
                                                     has.lot = as.factor(has.lot),
                                                     has.street = as.factor(has.street),
-                                                    neighborhood = as.factor(neighborhood),
                                                     pet.allowed = as.factor(pet.allowed),
                                                     traffic.level = as.factor(traffic.level),
                                                     has.parking = as.factor(has.parking),
@@ -56,26 +69,64 @@ apartment_selected <- apartment_selected %>% mutate(shopping.num = as.factor(sho
                                                     cha.elt.mid.hi = as.factor(cha.elt.mid.hi),
                                                     priv.elt.mid.hi = as.factor(priv.elt.mid.hi),
                                                     sqft.regressed = as.factor(sqft.regressed))
-apartment_selected$neighborhood <- gsub("\\s+", "", apartment_selected$neighborhood)
-apartment_selected$neighborhood <- gsub("[^[:alnum:] ]", "", apartment_selected$neighborhood)
 ```
+
+
+```{r}
+zip.map <- geojson_read("zip.geojson",  what = "sp")
+zip.nb <- poly2nb(zip.map)
+zip.mat <- nb2mat(zip.nb, style="B")
+```
+
+```{r}
+apartment_selected <- apartment_selected %>% filter(zip %in% as.character(zip.map$zip))
+nrow(apartment_selected)
+```
+
+```{r}
+zip_freq <- table(zip.map$zip)
+duplicates <- names(zip_freq)[which(zip_freq > 1)]
+```
+
+```{r}
+options(max.print = 1000000)
+dup.zip.idx <- which(zip.map$zip %in% duplicates)
+unique.zip.mat <- as.matrix(zip.mat)
+distinct_zip_names <- zip.map$zip[-dup.zip.idx]
+for(zip.code in duplicates) {
+  duplicate_idx <- zip.map$zip == zip.code
+  combined_neighbor_row <- apply(unique.zip.mat[duplicate_idx, ], MARGIN = 2, FUN = sum)
+  combined_neighbor_row[combined_neighbor_row > 1] <- 1
+  combined_neighbor_row <- combined_neighbor_row
+  unique.zip.mat <- rbind(unique.zip.mat, combined_neighbor_row)
+  unique.zip.mat <- cbind(unique.zip.mat, c(combined_neighbor_row, 0))
+  distinct_zip_names <- c(distinct_zip_names, zip.code)
+}
+unique.zip.mat <- unique.zip.mat[-dup.zip.idx, -dup.zip.idx]
+row.names(unique.zip.mat) <- distinct_zip_names
+colnames(unique.zip.mat) <- distinct_zip_names
+```
+
+```{r}
+zip.order <- levels(as.factor(apartment_selected$zip))
+unique.zip.mat <- unique.zip.mat[zip.order, zip.order]
+unique.zip.mat
+```
+
 
 ```{r}
 sapply(apartment_selected, function(x) {return(length(levels(x)))})
 ```
 
 ```{r}
-apartment_selected <- apartment_selected %>% select(sqft, zip, neighborhood, baths, beds, sqft.regressed, has.covered, has.garage, has.lot, has.street, rent) %>% mutate(zip = as.factor(zip), 
+apartment_selected <- apartment_selected %>% select(sqft, zip, baths, beds, sqft.regressed, has.covered, has.garage, has.lot, has.street, rent) %>% mutate(zip = as.factor(zip), 
                                                                                                                                                                          baths = as.factor(baths),
-                                                                                                                                                                         beds = as.factor(beds),
-                                                                                                                                                                         neighborhood = as.factor(neighborhood))
+                                                                                                                                                                         beds = as.factor(beds))
 ```
 
 
 ```{r}
-apartment_test_idx <- sample(1:nrow(apartment_selected), 3368)
-apartment_test <- apartment_selected[apartment_test_idx, ]
-apartment_train <- apartment_selected[-apartment_test_idx, ]
+apartment_train <- apartment_selected
 ```
 
 
@@ -112,7 +163,7 @@ plot(full.mod.log.2)
 
 
 ```{r warning=FALSE}
-gam.mod.log <- gam(log(rent) ~ s(log(sqft), k = 601, m = 2) +  neighborhood + zip + baths + beds + sqft.regressed + has.covered + has.garage + has.lot + has.street, data = apartment_train)
+gam.mod.log <- gam(log(rent) ~ s(log(sqft), k = 2001, m = 2) + zip + baths + beds + sqft.regressed + has.covered + has.garage + has.lot + has.street, data = apartment_train, method = "REML")
 gam.check(gam.mod.log)
 summary(gam.mod.log)
 ```
@@ -121,81 +172,212 @@ summary(gam.mod.log)
 plot(gam.mod.log)
 ```
 
+
 ```{r}
-prep_fuse_lasso_mat <- function(apartment_train_ord) {
-  apartment_train.mat <- as.data.frame(model.matrix(rent ~ . + log(sqft) - sqft, apartment_train_ord)[, -1]) %>% mutate(rent = apartment_train_ord$rent)
+fuse_aic <- function(lasso_path, std_resid) {
+    N <- nrow(lasso_path$fit)
+    y <- matrix(lasso_path$pathobjs$y, nrow = length(lasso_path$pathobjs$y), ncol = length(lasso_path$lambda), byrow = FALSE)
+    error <- apply((y - lasso_path$fit)^2, 2, sum)
+    adj.sigma <- N * std_resid^2
+    adj.opt <- 2 * std_resid^2 * lasso_path$df
+    return((error + adj.sigma + adj.opt) / N)
+}
+
+set_pen_mat <- function(mat, offset, M) {
+  K <- nrow(mat)
+  M[(1:K) + offset, (1:K) + offset] <- mat
+  return(M)
+}
+
+sequential_pen_mat <- function(K, offset, M) {
+  mat <- matrix(0, nrow = K, ncol = K)
+  for(i in 2:K) {
+    mat[i, i - 1] <- 1
+    mat[i - 1, i] <- 1
+  }
+  return(set_pen_mat(mat, offset, M))
+}
+
+prep_lasso_mat <- function(apartment_df) {
+  apartment_train.mat <- as.data.frame(model.matrix(rent ~ . + log(sqft) - sqft, apartment_df)[, -1])
+  apartment_train.mat$rent <- apartment_df$rent
   max.logsqft <- max(apartment_train.mat$`log(sqft)`)
   min.logsqft <- min(apartment_train.mat$`log(sqft)`)
   qlogsqft <- (apartment_train.mat$`log(sqft)` - min.logsqft) / (max.logsqft - min.logsqft)
   apartment_train.mat$qlogsqft <- qlogsqft
   apartment_train.mat <- apartment_train.mat %>% select(-`log(sqft)`)
   full.mod.varrank <- lm(log(rent) ~ ., apartment_train.mat)
-  
-  apartment_train.mat <- as.data.frame(model.matrix(rent ~ . - sqft, apartment_train_ord)) %>% mutate(rent = apartment_train_ord$rent)
+  M <- length(full.mod.varrank$coefficients)
+  pen_mat <- matrix(0, nrow = M, ncol = M)
+
+  apartment_train.mat <- as.data.frame(model.matrix(rent ~ . - sqft, apartment_df)) %>% mutate(rent = apartment_df$rent)
   zip_coefficients <- full.mod.varrank$coefficients[names(full.mod.varrank$coefficients)[grepl("zip", names(full.mod.varrank$coefficients), fixed = TRUE)]]
-  zip_na_idx <- is.na(zip_coefficients)
-  zip_nna <- zip_coefficients[!zip_na_idx]
-  zip_na <- zip_coefficients[zip_na_idx]
   apartment_train_lasso <- data.frame(intercept = apartment_train.mat[, 1])
-  apartment_train_lasso <- cbind(apartment_train_lasso, apartment_train.mat[, names(zip_na)])
-  gen.lasso.edges <- cbind(rep(1, length(zip_na)), 2:(1 + length(zip_na)))
+  apartment_train_lasso <- cbind(apartment_train_lasso, apartment_train.mat[, names(zip_coefficients)])
+  zip_numbers <- substring(names(zip_coefficients), 4)
+  pen_mat <- set_pen_mat(unique.zip.mat[zip_numbers, zip_numbers], 1, pen_mat)
 
-  zip_nna <- zip_nna[order(zip_nna)]
-  gen.lasso.edges.temp <- cbind(rep(1, length(zip_nna)), (1:length(zip_nna)) + ncol(apartment_train_lasso))
-  gen.lasso.edges <- rbind(gen.lasso.edges, gen.lasso.edges.temp)
-  gen.lasso.edges.temp <- cbind(ncol(apartment_train_lasso) + (1:(length(zip_nna) - 1)), ncol(apartment_train_lasso) + (2:length(zip_nna)))
-  gen.lasso.edges <- rbind(gen.lasso.edges, gen.lasso.edges.temp)
-  apartment_train_lasso <- cbind(apartment_train_lasso, apartment_train.mat[, names(zip_nna)])
+  beds_coefficients <- full.mod.varrank$coefficients[names(full.mod.varrank$coefficients)[grepl("beds", names(full.mod.varrank$coefficients), fixed = TRUE)]]
+  pen_mat <- sequential_pen_mat(length(beds_coefficients), ncol(apartment_train_lasso), pen_mat)
+  apartment_train_lasso <- cbind(apartment_train_lasso, apartment_train.mat[, names(beds_coefficients)])
   
-  neighbor_coefficients <- full.mod.varrank$coefficients[names(full.mod.varrank$coefficients)[grepl("neighborhood", names(full.mod.varrank$coefficients), fixed = TRUE)]]
-  neighbor_na_idx <- is.na(neighbor_coefficients)
-  neighbor_nna <- neighbor_coefficients[!neighbor_na_idx]
-  neighbor_na <- neighbor_coefficients[neighbor_na_idx]
-  gen.lasso.edges.temp <- cbind(rep(1, length(neighbor_na)), (1:length(neighbor_na)) + ncol(apartment_train_lasso))
-  gen.lasso.edges <- rbind(gen.lasso.edges, gen.lasso.edges.temp)
-  apartment_train_lasso <- cbind(apartment_train_lasso, apartment_train.mat[, names(neighbor_na)])
+  baths_coefficients <- full.mod.varrank$coefficients[names(full.mod.varrank$coefficients)[grepl("baths", names(full.mod.varrank$coefficients), fixed = TRUE)]]
+  pen_mat <- sequential_pen_mat(length(baths_coefficients), ncol(apartment_train_lasso), pen_mat)
+  apartment_train_lasso <- cbind(apartment_train_lasso, apartment_train.mat[, names(baths_coefficients)])
 
-  gen.lasso.edges.temp <- cbind(rep(1, length(neighbor_nna)), (1:length(neighbor_nna)) + ncol(apartment_train_lasso))
-  gen.lasso.edges <- rbind(gen.lasso.edges, gen.lasso.edges.temp)
-  gen.lasso.edges.temp <- cbind(ncol(apartment_train_lasso) + (1:(length(neighbor_nna) - 1)), ncol(apartment_train_lasso) + (2:length(neighbor_nna)))
-  gen.lasso.edges <- rbind(gen.lasso.edges, gen.lasso.edges.temp)
-  apartment_train_lasso <- cbind(apartment_train_lasso, apartment_train.mat[, names(neighbor_nna)])
-  
-  lasso.colnames <- c(names(zip_na), names(zip_nna), names(neighbor_na), names(neighbor_nna))
+  lasso.colnames <- c("intercept", names(zip_coefficients), names(beds_coefficients), names(baths_coefficients))
   colnames(apartment_train_lasso) <- lasso.colnames
   lasso.unincl <- names(full.mod.varrank$coefficients)[!names(full.mod.varrank$coefficients) %in% colnames(apartment_train_lasso)]
   lasso.unincl <- lasso.unincl[-c(1, length(lasso.unincl))]
-  gen.lasso.edges.temp <- cbind(rep(1, length(lasso.unincl)), (1:length(lasso.unincl)) + ncol(apartment_train_lasso))
-  gen.lasso.edges <- rbind(gen.lasso.edges, gen.lasso.edges.temp)
+
   apartment_train_lasso <- cbind(apartment_train_lasso, apartment_train.mat[, lasso.unincl])
   apartment_train_lasso$qlogsqft <- qlogsqft
-  return(list(X = apartment_train_lasso, graph = gen.lasso.edges))
+  return(list(X = apartment_train_lasso, penalties = graph_from_adjacency_matrix(pen_mat, mode = "undirected", diag=FALSE)))
 }
 ```
 
 
 ```{r}
-apartment_train_ord <- apartment_train %>% mutate(beds = as.numeric(beds), baths = as.numeric(baths)) %>% mutate(beds1 = beds >= 1, beds2 = beds >= 2, beds3 = beds >=3, beds4 = beds >=4) %>%
-                                           mutate(baths1.5 = baths >= 1.5, baths2 = baths >= 2, baths2.5 = baths >= 2.5, baths3 = baths >= 3, baths3.5 = baths >= 3.5, baths4 = baths >= 4)
-apartment_train_ord <- apartment_train_ord %>% select(-beds, -baths)
+select_penal_param <- function(apartment_df, max_gamma, n_gamma, sigma, crit = fuse_aic) {
+  apartment_fuse_lasso <- prep_lasso_mat(apartment_df)
+  gamma_grid <- seq(from = 0, to = max_gamma, length.out = n_gamma)
+  best_aic <- Inf
+  best_gamma <- 0
+  best_lambda <- NULL
 
+  fuse_aic <- function(lasso_path, std_resid) {
+    N <- nrow(lasso_path$fit)
+    y <- matrix(lasso_path$pathobjs$y, nrow = length(lasso_path$pathobjs$y), ncol = length(lasso_path$lambda), byrow = FALSE)
+    error <- apply((y - lasso_path$fit)^2, 2, sum)
+    adj.sigma <- N * std_resid^2
+    adj.opt <- 2 * std_resid^2 * lasso_path$df
+    return((error + adj.sigma + adj.opt) / N)
+  }
+  
+  results <- foreach(
+    gamma_param = gamma_grid,
+    .combine = "c"
+  ) %dopar% {
+    gen_lasso_path <- genlasso::fusedlasso(y = log(apartment_df$rent), X = as.matrix(apartment_fuse_lasso$X), graph = apartment_fuse_lasso$penalties, 
+                                             maxsteps = Inf, gamma = gamma_param)
+    insample_aic <- crit(gen_lasso_path, sigma)
+    current_best <- which(insample_aic == min(insample_aic))
+    if(length(current_best) >= 2) {
+      current_best <- current_best[1]
+    }
+    return(list(list(best_aic=insample_aic[current_best], best_idx=current_best, best_lambda = gen_lasso_path$lambda[current_best],  gamma=gamma_param)))
+  }
+  for(r in results) {
+      if(r$best_aic <= best_aic) {
+        best_gamma <- r$gamma
+        best_aic <- r$best_aic 
+        best_lambda <- r$best_lambda
+      }
+  }
+  return(list(aic=best_aic, gamma=best_gamma, lambda=best_lambda))
+}
 ```
 
 
 ```{r}
-apartment_fuse_lasso <- prep_fuse_lasso_mat(apartment_train_ord)
-penal_graph <- graph_from_edgelist(apartment_fuse_lasso$graph, directed = FALSE)
-penal_graph <- add_vertices(penal_graph, 1)
-fuse_lasso_path <- fusedlasso(log(apartment_train_ord$rent), X = as.matrix(apartment_fuse_lasso$X), graph = penal_graph)
+apartment_train <- apartment_train %>% mutate(beds = factor(beds, levels = sort(unique(beds)))) %>% mutate(baths = factor(baths, levels = sort(unique(baths))))
 ```
 
 
 ```{r}
-plot(fuse_lasso_path)
+best_lasso <- select_penal_param(apartment_train, 1, 200, sd(gam.mod.log$residuals))
+```
+
+```{r}
+apartment_fuse_lasso <- prep_lasso_mat(apartment_train)
+gen_lasso_path <- genlasso::fusedlasso(y = log(apartment_train$rent), X = as.matrix(apartment_fuse_lasso$X), graph = apartment_fuse_lasso$penalties, 
+                                             maxsteps = Inf, gamma = best_lasso$gamma)
+insample_aic <- fuse_aic(gen_lasso_path, sd(gam.mod.log$residuals))
+```
+
+```{r}
+fuse_lasso_coef <- coef(gen_lasso_path, lambda = best_lasso$lambda)
+lasso_betas <- c(fuse_lasso_coef$beta)
+names(lasso_betas) <- colnames(apartment_fuse_lasso$X)
+sort(lasso_betas)
+```
+
+```{r}
+combine_lasso_components <- function(matcher, lasso_betas, zero_level) {
+  lasso_betas <- sort(lasso_betas)
+  coef_names <- names(lasso_betas)
+  coef_names_match <- coef_names[grepl(matcher, coef_names, fixed = TRUE)]
+  betas_match <- lasso_betas[coef_names_match]
+  betas_match <- sort(betas_match)
+  combine_mat <- matrix(0, nrow = length(betas_match), ncol = length(betas_match))
+  
+  for(i in 2:length(betas_match)) {
+    if(betas_match[i] - betas_match[i - 1] == 0) {
+      combine_mat[i, i - 1] = 1
+      combine_mat[i - 1, i] = 1
+    }
+  }
+  combine_graph <- graph_from_adjacency_matrix(combine_mat, mode = "undirected", diag=FALSE)
+  combine_components <- components(combine_graph, "weak")
+  select_components <- which(combine_components$csize >= 2)
+  result = list()
+  for(c in select_components) {
+    component_parts <- names(betas_match[combine_components$membership == c])
+    if(sum(abs(betas_match[component_parts])) == 0) {
+      component_parts <- c(component_parts, zero_level)
+    }
+    result[[paste0("C", c)]] <- component_parts
+    
+  }
+  
+  zero_components <- c(names(betas_match[betas_match == 0]), zero_level)
+  if(length(zero_components) > 1) {
+    result[["C0"]] <- zero_components
+  }
+  
+  return(result)
+}
+
+apartment_merged <- as.data.frame(apartment_train)
 ```
 
 
 ```{r}
+zip_partitions <- combine_lasso_components("zip", lasso_betas, paste0("zip", levels(apartment_train$zip)[1]))
+apartment_merged <- apartment_merged %>% mutate(zip = as.character(zip))
+for(p in names(zip_partitions)) {
+  zip_code <- substring(zip_partitions[[p]], 4)
+  apartment_merged <- apartment_merged %>% 
+    mutate(zip = case_when(zip %in% zip_code ~ p, TRUE ~ zip))
+}
+apartment_merged <- apartment_merged %>% mutate(zip = as.factor(zip))
+levels(apartment_merged$zip)
+```
 
+
+```{r}
+combine_lasso_components("baths", lasso_betas, "baths1")
+```
+
+```{r}
+combine_lasso_components("beds", lasso_betas, "beds0")
+```
+
+```{r}
+gam.mod.log.2 <- gam(log(rent) ~ s(log(sqft), k = 2001, m = 2) + zip + baths + beds + sqft.regressed + has.covered + has.garage + has.lot + has.street, data = apartment_merged, method = "REML")
+gam.check(gam.mod.log.2)
+summary(gam.mod.log.2)
+```
+
+```{r}
+bptest(gam.mod.log.2)
+```
+
+```{r}
+dwtest(gam.mod.log.2)
+```
+
+```{r}
+visreg(gam.mod.log.2, "sqft", trans = exp, data = apartment_merged, ylab = "rent")
 ```
 
