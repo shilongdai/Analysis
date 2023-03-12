@@ -1,6 +1,8 @@
 ---
 title: "Apartment Rent Analysis"
-output: pdf_document
+output:
+  html_document:
+    df_print: paged
 date: "2022-12-14"
 ---
 
@@ -27,7 +29,7 @@ library(broom)
 require(viridis)
 require(gridExtra)
 set.seed(93)
-n.cores <- 10
+n.cores <- 9
 cluster <- parallel::makeCluster(
   n.cores, 
   type = "FORK"
@@ -43,7 +45,7 @@ to actual categorical types.
 
 
 ```{r}
-apartment_full <- read.csv("full_sqft.csv")
+apartment_full <- read.csv("full_sqft.csv") %>% filter(beds <= 3, baths <= (beds + 0.5))
 apartment_selected <- apartment_full %>% select(-address, -city, -name, -state, -bath_count, -bed_count, -neighborhood)
 apartment_selected <- apartment_selected %>% mutate(shopping.num = as.factor(shopping.num),
                                                     zip = as.character(zip),
@@ -174,9 +176,28 @@ sqft.plt.2 <- ggplot(apartment_train, aes(x = log(sqft), y = log(rent))) + geom_
 grid.arrange(sqft.plt.1, sqft.plt.2)
 ```
 
-For the categorical variables, zip, beds, and baths have 
+For the categorical variables, zip, beds, and baths have many levels. Thus, fused 
+lasso is used to potentially merge levels together. Fused lasso is a generalization 
+of the traditional lasso, where instead of shrinking the coefficients towards zero, 
+it shrinks the difference between selected pairs of coefficients, which means that 
+the coefficients can be shared for some levels in the categorical variable. Furthermore, 
+it can still shrink the coefficients towards 0 with the original penalty term.
+
+For the zip variable, the geolocation adjacency matrix is used to construct the 
+penalties. It seems reasonable to assume that nearby zip district may contribute 
+similarly to the rent of an apartment. Thus, the coefficients for adjacent zip areas 
+are shrinked together.
+
+For the beds and baths variable, a conservative hypothesis would be that adding a 
+new beds/baths or half baths would not contribute to more rent. Thus, the coefficients 
+for the adjacent count of beds and baths are shrinked together.
+
+In order to economically determine the optimal hyperparameter for lasso, the AIC 
+is used to approximate the out of sample error, and the parameter on the lasso path 
+corresponding to the least AIC is selected as the optimal tuning parameter.
 
 ```{r}
+# computes AIC according to generalized LASSO paper
 fuse_aic <- function(lasso_path, std_resid) {
     N <- nrow(lasso_path$fit)
     y <- matrix(lasso_path$pathobjs$y, nrow = length(lasso_path$pathobjs$y), ncol = length(lasso_path$lambda), byrow = FALSE)
@@ -186,6 +207,7 @@ fuse_aic <- function(lasso_path, std_resid) {
     return((error + adj.sigma + adj.opt) / N)
 }
 
+# Utility functions for creating the lasso penalty matrix
 set_pen_mat <- function(mat, offset, M) {
   K <- nrow(mat)
   M[(1:K) + offset, (1:K) + offset] <- mat
@@ -201,9 +223,13 @@ sequential_pen_mat <- function(K, offset, M) {
   return(set_pen_mat(mat, offset, M))
 }
 
+# Utility function for creating the design matrix and penalty matrix
 prep_lasso_mat <- function(apartment_df) {
+  # Creates the design matrix with dummy variables
   apartment_train.mat <- as.data.frame(model.matrix(rent ~ . + log(sqft) - sqft, apartment_df)[, -1])
   apartment_train.mat$rent <- apartment_df$rent
+  
+  # normalizes square feet to between 0 and 1 in order to avoid bias in penalization
   max.logsqft <- max(apartment_train.mat$`log(sqft)`)
   min.logsqft <- min(apartment_train.mat$`log(sqft)`)
   qlogsqft <- (apartment_train.mat$`log(sqft)` - min.logsqft) / (max.logsqft - min.logsqft)
@@ -213,6 +239,7 @@ prep_lasso_mat <- function(apartment_df) {
   M <- length(full.mod.varrank$coefficients)
   pen_mat <- matrix(0, nrow = M, ncol = M)
 
+  # creates penalty for zip by geolocation
   apartment_train.mat <- as.data.frame(model.matrix(rent ~ . - sqft, apartment_df)) %>% mutate(rent = apartment_df$rent)
   zip_coefficients <- full.mod.varrank$coefficients[names(full.mod.varrank$coefficients)[grepl("zip", names(full.mod.varrank$coefficients), fixed = TRUE)]]
   apartment_train_lasso <- data.frame(intercept = apartment_train.mat[, 1])
@@ -220,14 +247,17 @@ prep_lasso_mat <- function(apartment_df) {
   zip_numbers <- substring(names(zip_coefficients), 4)
   pen_mat <- set_pen_mat(unique.zip.mat[zip_numbers, zip_numbers], 1, pen_mat)
 
+  # creates penalty for beds sequentially
   beds_coefficients <- full.mod.varrank$coefficients[names(full.mod.varrank$coefficients)[grepl("beds", names(full.mod.varrank$coefficients), fixed = TRUE)]]
   pen_mat <- sequential_pen_mat(length(beds_coefficients), ncol(apartment_train_lasso), pen_mat)
   apartment_train_lasso <- cbind(apartment_train_lasso, apartment_train.mat[, names(beds_coefficients)])
   
+  # creates penalty for baths sequentially
   baths_coefficients <- full.mod.varrank$coefficients[names(full.mod.varrank$coefficients)[grepl("baths", names(full.mod.varrank$coefficients), fixed = TRUE)]]
   pen_mat <- sequential_pen_mat(length(baths_coefficients), ncol(apartment_train_lasso), pen_mat)
   apartment_train_lasso <- cbind(apartment_train_lasso, apartment_train.mat[, names(baths_coefficients)])
 
+  # extracts the final columns
   lasso.colnames <- c("intercept", names(zip_coefficients), names(beds_coefficients), names(baths_coefficients))
   colnames(apartment_train_lasso) <- lasso.colnames
   lasso.unincl <- names(full.mod.varrank$coefficients)[!names(full.mod.varrank$coefficients) %in% colnames(apartment_train_lasso)]
@@ -239,6 +269,7 @@ prep_lasso_mat <- function(apartment_df) {
 }
 ```
 
+In order to speed up the computation, the selection process is ran in parallel.
 
 ```{r}
 select_penal_param <- function(apartment_df, max_gamma, n_gamma, sigma, crit = fuse_aic) {
@@ -282,9 +313,8 @@ select_penal_param <- function(apartment_df, max_gamma, n_gamma, sigma, crit = f
 ```
 
 
-```{r}
-apartment_train <- apartment_train %>% mutate(beds = factor(beds, levels = sort(unique(beds)))) %>% mutate(baths = factor(baths, levels = sort(unique(baths))))
-```
+After getting the lasso fit from the optimal tuning parameter, the categorical 
+variables would need to be consolidated into groups based on the lasso parameters. 
 
 
 ```{r}
@@ -323,6 +353,7 @@ combine_lasso_components <- function(matcher, lasso_betas, zero_level) {
   return(result)
 }
 
+apartment_train <- apartment_train %>% mutate(beds = factor(beds, levels = sort(unique(beds)))) %>% mutate(baths = factor(baths, levels = sort(unique(baths))))
 apartment_merged <- as.data.frame(apartment_train)
 ```
 
@@ -352,67 +383,9 @@ Since there will not be any more apartment from May of 2022, the model is fitted
 mostly to find the relationships between the variables. Thus, only cross validation 
 well be performed. For cross validation, the dataset is 
 
-```{r}
-apartment_train_shuffled <- apartment_train[sample(1:nrow(apartment_train)), ]
-apartment_folds <- groupKFold(1:nrow(apartment_train_shuffled), 10)
-```
 
 ```{r}
-cv_rmse <- data.frame()
-
-for(indexes in apartment_folds) {
-  training_df <- apartment_train[indexes, ]
-
-  best_lasso <- select_penal_param(training_df, 1, 200, sd(full.mod.log.2$residuals))
-  apartment_fuse_lasso <- prep_lasso_mat(training_df)
-  gen_lasso_path <- genlasso::fusedlasso(y = log(training_df$rent), X = as.matrix(apartment_fuse_lasso$X), graph = apartment_fuse_lasso$penalties, 
-                                             maxsteps = Inf, gamma = best_lasso$gamma)
-  fuse_lasso_coef <- coef(gen_lasso_path, lambda = best_lasso$lambda)
-  lasso_betas <- c(fuse_lasso_coef$beta)
-  names(lasso_betas) <- colnames(apartment_fuse_lasso$X)
-  apartment_merged <- as.data.frame(apartment_train)
-  zip_partitions <- combine_lasso_components("zip", lasso_betas, paste0("zip", levels(apartment_merged$zip)[1]))
-  baths_partitions <- combine_lasso_components("baths", lasso_betas, "baths1")
-  beds_partitions <- combine_lasso_components("beds", lasso_betas, "beds0")
-  apartment_merged <- consolidate_levels(zip_partitions, 4, "zip", apartment_merged)
-  apartment_merged <- consolidate_levels(baths_partitions, 6, "baths", apartment_merged)
-  apartment_merged <- consolidate_levels(beds_partitions, 5, "beds", apartment_merged)
-  training_merged <- apartment_merged[indexes, ]
-  test_df <- apartment_merged[-indexes, ]
-  
-  log.log.mod <- lm(log(rent) ~ log(sqft) + zip + baths + beds + sqft.regressed + has.covered + has.garage + has.lot + has.street, data = training_merged)
-  untrans.gam <- gam(rent ~ s(sqft, k = 2001, m = 2) + zip + baths + beds + sqft.regressed + has.covered + has.garage + has.lot + has.street, data = training_merged, method = "REML")
-  gam.mod.log <- gam(log(rent) ~ s(log(sqft), k = 2001, m = 2) + zip + baths + beds + sqft.regressed + has.covered + has.garage + has.lot + has.street, data = training_merged, method = "REML")
-  
-  log.log.pred <- exp(predict(log.log.mod, test_df))
-  untrans.pred <- predict(untrans.gam, test_df)
-  gam.log.pred <- exp(predict(gam.mod.log, test_df))
-  
-  log.log.pred.rmse <- sqrt(mean((test_df$rent - log.log.pred)^2))
-  untrans.pred.rmse <- sqrt(mean((test_df$rent - untrans.pred)^2))
-  gam.pred.rmse <- sqrt(mean((test_df$rent - gam.log.pred)^2))
-  
-  cv_rmse <- rbind(cv_rmse, c(log.log.pred.rmse, "log.log.lm"))
-  cv_rmse <- rbind(cv_rmse, c(untrans.pred.rmse, "reg.gam"))
-  cv_rmse <- rbind(cv_rmse, c(gam.pred.rmse, "log.gam"))
-}
-
-colnames(cv_rmse) <- c("RMSE", "Method")
-cv_rmse$RMSE <- as.numeric(cv_rmse$RMSE)
-head(cv_rmse)
-```
-
-```{r}
-ggplot(cv_rmse, aes(x = Method, y = RMSE, fill = Method)) + geom_boxplot()
-```
-
-```{r}
-aggregate(RMSE ~ Method, cv_rmse, mean)
-```
-
-
-```{r}
-best_lasso <- select_penal_param(apartment_train, 1, 200, sd(full.mod.log.2$residuals))
+best_lasso <- select_penal_param(apartment_train, 1, 101, 0)
 apartment_fuse_lasso <- prep_lasso_mat(apartment_train)
 gen_lasso_path <- genlasso::fusedlasso(y = log(apartment_train$rent), X = as.matrix(apartment_fuse_lasso$X), graph = apartment_fuse_lasso$penalties, 
                                              maxsteps = Inf, gamma = best_lasso$gamma)
@@ -430,7 +403,20 @@ zip_partitions
 ```
 
 ```{r}
-gam.mod.log.2 <- gam(log(rent) ~ s(log(sqft), k = 2001, m = 2) + zip + baths + beds + sqft.regressed + has.covered + has.garage + has.lot + has.street, data = apartment_merged, method = "REML")
+log.log.mod <- lm(log(rent) ~ log(sqft) + zip + baths + beds + sqft.regressed + has.covered + has.garage + has.lot + has.street, data = apartment_merged)
+untrans.gam <- gam(rent ~ s(sqft, k = 2001, m = 2) + zip + baths + beds + sqft.regressed + has.covered + has.garage + has.lot + has.street, data = apartment_merged, method = "REML")
+gam.mod.log <- gam(log(rent) ~ s(log(sqft), k = 2001, m = 2) + zip + baths + beds + sqft.regressed + has.covered + has.garage + has.lot + has.street, data = apartment_merged, method = "REML")
+
+perf_info_metrics <- data.frame(
+  Method = c("Log-Log-LM", "Plain-GAM", "Log-Log-GAM"),
+  AIC = c(AIC(log.log.mod), AIC(untrans.gam), AIC(gam.mod.log)),
+  BIC = c(BIC(log.log.mod), BIC(untrans.gam), BIC(gam.mod.log))
+)
+```
+
+
+```{r}
+perf_info_metrics
 ```
 
 
@@ -447,6 +433,7 @@ bptest(gam.mod.log.2)
 ```{r}
 dwtest(gam.mod.log.2)
 ```
+
 ```{r}
 lillie.test(gam.mod.log.2$residuals)
 ```
@@ -509,6 +496,7 @@ ggplot(data = zip.geo.df) +
   coord_map() + ggtitle("Multiplicative Effect to Rent by Zip")
 ```
 
+
 ```{r}
 confint.paragam <- function(mod, level = 0.95) {
   mod.s <- summary(mod)
@@ -536,11 +524,14 @@ confint.paragam <- function(mod, level = 0.95) {
 
 gam.confint <- confint.paragam(gam.mod.log.2) %>% select(Term, Estimate, L, U)
 ```
+
+
 ```{r}
 
 gam.confint.beds <- gam.confint %>% filter(grepl("beds", Term, fixed = T))
 ggplot(gam.confint.beds, aes(x = Term, y = exp(Estimate), color = Term)) + geom_point(size = 3) + geom_errorbar(aes(ymin=exp(L), ymax=exp(U)), width=.3)
 ```
+
 
 ```{r}
 gam.confint.baths <- gam.confint %>% filter(grepl("baths", Term, fixed = T))
