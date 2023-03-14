@@ -41,7 +41,7 @@ After narrowing down the scope, a separate mini-project was undertaken to fill i
 While picking the feature to use, an important criteria was whether the feature is reliable and understood. Apartments.com had a lot of auxiliary information such as the number of shopping centers, recreational centers, and walk scores etc. However, it is unclear what criteria was used in generating those information. Thus, they are not really reliable or well understood enough. In addition, the site also provides amenities information. However, some of the apartments seem to have used relatively standard tags for amenities. On the other hand, it seems to be possible to have custom defined names for amenities as well. Thus, parsing the amenities of the apartment would have been an NLP undertaking. While possible as a next step, doing NLP analysis to aggregate amenities tags was not on the agenda at the moment, and filtering it by hand would have taken a decent amount of time. Thus, the amenities were not used since it was difficult to clean. Thus, in the end, the following features were picked.
 
 | Feature               | Type        | Description                               |
-|-----------------------|-------------|-------------------------------------------|
+|---------------------------|------------------|---------------------------|
 | Square feet           | Numerical   | The square footage of apartment           |
 | Zip                   | Categorical | The zip code for the apartment            |
 | Beds                  | Categorical | The number of bedrooms for apartment      |
@@ -109,3 +109,7 @@ The bathroom case seems to be more interesting. As the number of bathroom increa
 The point marginal effect of bathrooms is increasing with the exception of three bathrooms vs 2.5 bathrooms. However, there are some overlaps in the confidence intervals, so that the difference in marginal effects are not as significant as the bedroom case. Nevertheless, intuitively, it would seem unlikely that for each additional bathroom/half-bath, one has to pay an increasing extra amount of rent just because of the added bathroom. It seems more plausible that the number of bathroom is a proxy for other factors, such as the apartment having two floors for instance, where a half bath would be located on the first floor.
 
 ![Marginal effect of bathrooms](https://github.com/shilongdai/Analysis/raw/master/Apartments/Images/maginalBath.png)
+
+## Conclusions
+
+After learning more about the apartments in Chicago, a model based approach was taken to assess the rent of the apartment and generate the candidates. Since the model computes the expected rent of an apartment given its attribute, it is possible to use the model to evaluate whether the apartment is more expensive for its attribute or cheap for its attribute. Thus, instead of considering the raw rent of the apartment, the rent for each apartment was standardized via the expected rent from the model, and the scale parameter (i.e. the standard deviation of the noise term). Then, the apartments that are within a given budget, within 1 standard deviation of the expected price, and are located within a given amount of travel time via Google Map API were picked as candidate. Later, some of the candidate are checked out on a visit, and the final apartment was determined.
