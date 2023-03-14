@@ -1194,7 +1194,8 @@ throughout the city.
 
 ```{r message=FALSE, error=FALSE, warning=FALSE}
 ggplot(apartments_raw_small, aes(x=lng, y=lat)) + geom_bin2d(bins = 70) +
-  scale_fill_continuous(type = "viridis") + xlim(-88, -87.35) + ylim(41.56, 42.06)
+  scale_fill_continuous(type = "viridis") + xlim(-88, -87.35) + ylim(41.56, 42.06) + 
+  ggtitle("Apartment Distributed Across Chicago")
 ```
 
 The rent correspond to the hubs of apartment locations. The rent is higher in the 

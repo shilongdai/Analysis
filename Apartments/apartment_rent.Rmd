@@ -382,9 +382,8 @@ well be performed. For cross validation, the dataset is shuffled then split into
 10 folds. For each fold, the lasso consolidation is performed first. Then, in order to 
 determine the appropriate level of complexity and transformation on the square feet, 
 three ways of handling the square feet/rent are attempted. First, a log-log linear model 
-is fitted, then a GAM model with no transformation on square feet and rent but with 
-degree 3 thin-plate smooth on square feet is tried. Finally, a log log GAM model with 
-degree 3 thin-plate smooth on log(sqft) is tested as well. Finally, the models 
+with thin-plate smooth on square feet is tried. Finally, a log log GAM model thin-plate 
+smooth on log(sqft) is tested as well. Finally, the models 
 are tested on the fold, and the average test RMSE is calculated.
 
 ```{r}
@@ -688,6 +687,31 @@ ggplot(gam.confint.beds, aes(x = Term, y = exp(Estimate), color = Term)) + scale
   ggtitle("Multiplicative Effect of Bedroms") 
 ```
 
+A different way of looking at the contribution of bedrooms is to consider the increase 
+in rent for an additional bedroom. Then, despite the increase in rent compared to 
+the studio case being almost linear in the previous plot, the marginal increase 
+for each bedroom is diminishing. While going from studio to one bedroom would lead 
+to an approximately 13% increase in rent, going from one bedroom to two would only 
+lead to an approximately 7% increase in rent. There does not seem to be significant 
+difference in the marginal increase from two to three bedroom compared to one to two. 
+Considering that as the bedroom increases, the rent increases, so that a multiplicative 
+increase from the previous number of bedrooms would have a greater increase in raw rent, 
+the decrease in marginal multiplicative effect can control the actual raw increase 
+in rent.
+
+```{r}
+beds.marginal.confint <- confint(glht(gam.mod.log.2, linfct = c("beds2 - beds1 = 0", "beds3 - beds2 = 0")))
+beds.marginal.df <- as.data.frame(beds.marginal.confint$confint)
+colnames(beds.marginal.df) <- names(gam.confint.beds[1, 2:4])
+beds.marginal.df <- rbind(gam.confint.beds[1, 2:4], beds.marginal.df)
+row.names(beds.marginal.df) <- 1:3
+ggplot(beds.marginal.df, aes(x = 1:3, y = exp(Estimate))) + scale_x_continuous(limits = c(0.8, 3.2), breaks = c(1, 2, 3)) +
+  geom_point(size = 3) + geom_line() + scale_y_continuous(limits = c(1, 1.16), breaks = seq(1, 1.15, 0.05)) +
+  geom_errorbar(aes(ymin=exp(L), ymax=exp(U)), width=.3) + xlab("Bedrooms") + ylab("Marginal Increase") + 
+  ggtitle("Marginal Effect of Bedroms") 
+```
+
+
 The bathroom case seems to be more interesting. As the number of bathroom increases, 
 there seems to be more variety in the rent of the apartments. The addition of a 
 half-bath can be attributed with around 8% increase in the rent from a single bathroom 
@@ -712,5 +736,28 @@ ggplot(gam.confint.baths, aes(x = Term, y = exp(Estimate), color = Term)) +
   scale_y_continuous(limits = c(1, 2.05), breaks = seq(1, 2.05, 0.1)) +
   xlab("Bathrooms") + ylab("Multiplicative Effect") + 
   ggtitle("Multiplicative Effect of Bathrooms") 
+```
+
+The point marginal effect of bathrooms is increasing with the exception of three bathrooms 
+vs 2.5 bathrooms. However, there are some overlaps in the confidence intervals, so that 
+the difference in marginal effects are not as significant as the bedroom case. Nevertheless, 
+intuitively, it would seem unlikely that for each additional bathroom/half-bath, one has to pay 
+an increasing extra amount of rent just because of the added bathroom. It seems more plausible 
+that the number of bathroom is a proxy for other factors, such as the apartment having 
+two floors for instance, where a half bath would be located on the first floor.
+
+```{r}
+baths.marginal.confint <- confint(glht(gam.mod.log.2, linfct = c("baths2 - baths1.5 = 0", 
+                                                                 "baths2.5 - baths2 = 0",
+                                                                 "baths3 - baths2.5 = 0",
+                                                                 "baths3.5 - baths3 = 0")))
+baths.marginal.df <- as.data.frame(baths.marginal.confint$confint)
+colnames(baths.marginal.df) <- names(gam.confint.baths[1, 2:4])
+baths.marginal.df <- rbind(gam.confint.baths[1, 2:4], baths.marginal.df)
+
+ggplot(baths.marginal.df, aes(x = seq(1.5, 3.5, 0.5), y = exp(Estimate))) +
+  geom_point(size = 3) + geom_line() + scale_x_continuous(limits = c(1.3, 3.7), breaks = seq(1.5, 3.5, 0.5)) +
+  geom_errorbar(aes(ymin=exp(L), ymax=exp(U)), width=.3) + xlab("Bathrooms") + ylab("Marginal Increase") + 
+  ggtitle("Marginal Effect of Bathrooms") 
 ```
 
