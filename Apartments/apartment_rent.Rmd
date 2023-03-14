@@ -684,7 +684,7 @@ gam.confint.beds <- gam.confint %>% filter(grepl("beds", Term, fixed = T))
 ggplot(gam.confint.beds, aes(x = Term, y = exp(Estimate), color = Term)) + scale_y_continuous(limits = c(1, 1.4), breaks = seq(1, 1.4, 0.05)) +
   geom_point(size = 3) + 
   geom_errorbar(aes(ymin=exp(L), ymax=exp(U)), width=.3) + xlab("Bedrooms") + ylab("Multiplicative Effect") + 
-  ggtitle("Multiplicative Effect of Bedroms") 
+  ggtitle("Multiplicative Effect of Bedrooms") 
 ```
 
 A different way of looking at the contribution of bedrooms is to consider the increase 
@@ -708,7 +708,7 @@ row.names(beds.marginal.df) <- 1:3
 ggplot(beds.marginal.df, aes(x = 1:3, y = exp(Estimate))) + scale_x_continuous(limits = c(0.8, 3.2), breaks = c(1, 2, 3)) +
   geom_point(size = 3) + geom_line() + scale_y_continuous(limits = c(1, 1.16), breaks = seq(1, 1.15, 0.05)) +
   geom_errorbar(aes(ymin=exp(L), ymax=exp(U)), width=.3) + xlab("Bedrooms") + ylab("Marginal Increase") + 
-  ggtitle("Marginal Effect of Bedroms") 
+  ggtitle("Marginal Effect of Bedrooms") 
 ```
 
 
