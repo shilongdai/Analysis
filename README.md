@@ -3,59 +3,7 @@ Repository for various statistics analysis/projects
 
 ## Apartments
 
-The data is a set of apartment model information crawled from apartment.com on May 25th. The 
-scraper is located at: https://github.com/shilongdai/Apartment_Scraper.
-It contains about 17K apartment listings. Each entry is a specific type of apartment listed.
-An overview of the variable is as follow:
-
-* location informations:
-    * address
-    * state
-    * zip
-    * city
-    * neighborhood
-* room information:
-    * beds
-    * baths
-    * sqft: the median sqft of the specific type of unit
-    * rent: the median rent of the specific type of unit
-* pet information:
-    * pet.allowed: whether pets are allowed
-    * pet.deposit
-    * pet.fee
-    * pet.rent
-* parking information:
-    * has.garage
-    * garage.fee
-    * has.lot
-    * lot.fee
-    * has.street
-    * street.fee
-    * has.convered
-    * covered.fee
-* counts of various types of schools listed on website, with variable *.School, and college.count
-* counts of place of interests in the vicinity listed on the website
-    * rec.num: number of parks or other recreational facility
-    * transit.num: number of public transit stations
-    * shopping.num: number of shopping centers
-    * air.num: number of airports
-    * rail.num: number of rail stations
-    * base.num: number of military bases
-* assessment of environment
-    * transit.score: public transit score
-    * sound.score
-    * walk.score
-    * bike.score
-    * traffic.level
-    * air.level
-    * busi.level: the level of bussiness operations
-
-The full data also has boolean variables indicating whether the given type of 
-unit has a certain feature, i.e. microwave. It also has variables indicating the 
-exact name of the school under the counts of the schools. However, for the initial 
-analysis, they are not considered. The eventual goal is to be able to create a pricing 
-model for the rent of generic apartment units based on the other information. Thus, 
-it's a regression task with the goal of predicting the rent from the other variables.
+In May of 2022, one of my main interest was to find an apartment in Chicago as a got admitted to the UChicago MScA graduate program. However, I did not know much about the apartment market in Chicago. Thus, in order to pick a comfortable apartment without paying an extraordinary price, I decided to take a data driven approach to learn about the Chicago apartments at that time. In order to collect apartment data, I created a Selenium based webscrapper at https://github.com/shilongdai/Apartment_Scraper that extracted apartment information from Apartments.com. The data collection process finished at around May 25th, 2022. Then, using the scrapped data, several models were built to estimate the contribution of various factors on rent. Using the models, I was able to select candidate apartments to check out when I eventually visited Chicago. Here, some of the results from the analysis I conducted for apartment searching are compiled.
 
 
 ## Wheat
