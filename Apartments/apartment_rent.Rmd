@@ -29,7 +29,7 @@ library(broom)
 require(viridis)
 require(gridExtra)
 set.seed(93)
-n.cores <- 9
+n.cores <- 1
 cluster <- parallel::makeCluster(
   n.cores, 
   type = "FORK"
@@ -41,11 +41,13 @@ doParallel::registerDoParallel(cl = cluster)
 
 The set of apartments with missing square footage filled in via regression from 
 the previous stage is loaded. Then, all the categorical variables are converted 
-to actual categorical types.
+to actual categorical types. Furthermore, the apartments are filtered such that 
+only the ones with at most 3 bedrooms, and plausible number of bathrooms compared 
+to the bedrooms are retained.
 
 
 ```{r}
-apartment_full <- read.csv("full_sqft.csv") %>% filter(beds <= 3, baths <= (beds + 0.5))
+apartment_full <- read.csv("full_sqft.csv") %>% filter(beds <= 3) %>% filter((beds == 0 & baths <= 1) | (baths <= beds + 0.5))
 apartment_selected <- apartment_full %>% select(-address, -city, -name, -state, -bath_count, -bed_count, -neighborhood)
 apartment_selected <- apartment_selected %>% mutate(shopping.num = as.factor(shopping.num),
                                                     zip = as.character(zip),
@@ -267,11 +269,7 @@ prep_lasso_mat <- function(apartment_df) {
   apartment_train_lasso$qlogsqft <- qlogsqft
   return(list(X = apartment_train_lasso, penalties = graph_from_adjacency_matrix(pen_mat, mode = "undirected", diag=FALSE)))
 }
-```
 
-In order to speed up the computation, the selection process is ran in parallel.
-
-```{r}
 select_penal_param <- function(apartment_df, max_gamma, n_gamma, sigma, crit = fuse_aic) {
   apartment_fuse_lasso <- prep_lasso_mat(apartment_df)
   gamma_grid <- seq(from = 0, to = max_gamma, length.out = n_gamma)
@@ -299,6 +297,8 @@ select_penal_param <- function(apartment_df, max_gamma, n_gamma, sigma, crit = f
     if(length(current_best) >= 2) {
       current_best <- current_best[1]
     }
+    finished_gamma = data.frame(completed = c(gamma_param))
+    write.csv(finished_gamma, file = "tracker.csv")
     return(list(list(best_aic=insample_aic[current_best], best_idx=current_best, best_lambda = gen_lasso_path$lambda[current_best],  gamma=gamma_param)))
   }
   for(r in results) {
@@ -353,12 +353,6 @@ combine_lasso_components <- function(matcher, lasso_betas, zero_level) {
   return(result)
 }
 
-apartment_train <- apartment_train %>% mutate(beds = factor(beds, levels = sort(unique(beds)))) %>% mutate(baths = factor(baths, levels = sort(unique(baths))))
-apartment_merged <- as.data.frame(apartment_train)
-```
-
-
-```{r}
 consolidate_levels <- function(partitions, prefix_length, var, df) {
   zero_levels <- levels(df[[var]])[1]
   df <- df %>% mutate(!! var := as.character(.data[[var]]))
@@ -376,16 +370,86 @@ consolidate_levels <- function(partitions, prefix_length, var, df) {
   return(df)
 }
 
+apartment_train <- apartment_train %>% mutate(beds = factor(beds, levels = sort(unique(beds)))) %>% mutate(baths = factor(baths, levels = sort(unique(baths))))
+apartment_merged <- as.data.frame(apartment_train)
 ```
 
+## Model Selection and 10-Fold CV
 
 Since there will not be any more apartment from May of 2022, the model is fitted 
 mostly to find the relationships between the variables. Thus, only cross validation 
-well be performed. For cross validation, the dataset is 
-
+well be performed. For cross validation, the dataset is shuffled then split into 
+10 folds. For each fold, the lasso consolidation is performed first. Then, in order to 
+determine the appropriate level of complexity and transformation on the square feet, 
+three ways of handling the square feet/rent are attempted. First, a log-log linear model 
+is fitted, then a GAM model with no transformation on square feet and rent but with 
+degree 3 thin-plate smooth on square feet is tried. Finally, a log log GAM model with 
+degree 3 thin-plate smooth on log(sqft) is tested as well. Finally, the models 
+are tested on the fold, and the average test RMSE is calculated.
 
 ```{r}
-best_lasso <- select_penal_param(apartment_train, 1, 101, 0)
+apartment_train_shuffled <- apartment_train[sample(1:nrow(apartment_train)), ]
+apartment_folds <- groupKFold(1:nrow(apartment_train_shuffled), 10)
+
+cv_rmse <- data.frame()
+for(indexes in apartment_folds) {
+  training_df <- apartment_train[indexes, ]
+  full.mod.log.2 <- lm(log(rent) ~ . - sqft + log(sqft), training_df)
+  best_lasso <- select_penal_param(training_df, 1, 200, sd(full.mod.log.2$residuals))
+  apartment_fuse_lasso <- prep_lasso_mat(training_df)
+  gen_lasso_path <- genlasso::fusedlasso(y = log(training_df$rent), X = as.matrix(apartment_fuse_lasso$X), graph = apartment_fuse_lasso$penalties, 
+                                             maxsteps = Inf, gamma = best_lasso$gamma)
+  fuse_lasso_coef <- coef(gen_lasso_path, lambda = best_lasso$lambda)
+  lasso_betas <- c(fuse_lasso_coef$beta)
+  names(lasso_betas) <- colnames(apartment_fuse_lasso$X)
+  apartment_merged <- as.data.frame(apartment_train)
+  zip_partitions <- combine_lasso_components("zip", lasso_betas, paste0("zip", levels(apartment_merged$zip)[1]))
+  baths_partitions <- combine_lasso_components("baths", lasso_betas, "baths1")
+  beds_partitions <- combine_lasso_components("beds", lasso_betas, "beds0")
+  apartment_merged <- consolidate_levels(zip_partitions, 4, "zip", apartment_merged)
+  apartment_merged <- consolidate_levels(baths_partitions, 6, "baths", apartment_merged)
+  apartment_merged <- consolidate_levels(beds_partitions, 5, "beds", apartment_merged)
+  training_merged <- apartment_merged[indexes, ]
+  test_df <- apartment_merged[-indexes, ]
+  
+  log.log.mod <- lm(log(rent) ~ log(sqft) + zip + baths + beds + sqft.regressed + has.covered + has.garage + has.lot + has.street, data = training_merged)
+  untrans.gam <- gam(rent ~ s(sqft, k = 2001, m = 2) + zip + baths + beds + sqft.regressed + has.covered + has.garage + has.lot + has.street, data = training_merged, method = "REML")
+  gam.mod.log <- gam(log(rent) ~ s(log(sqft), k = 2001, m = 2) + zip + baths + beds + sqft.regressed + has.covered + has.garage + has.lot + has.street, data = training_merged, method = "REML")
+  
+  log.log.pred <- exp(predict(log.log.mod, test_df))
+  untrans.pred <- predict(untrans.gam, test_df)
+  gam.log.pred <- exp(predict(gam.mod.log, test_df))
+  
+  log.log.pred.rmse <- sqrt(mean((test_df$rent - log.log.pred)^2))
+  untrans.pred.rmse <- sqrt(mean((test_df$rent - untrans.pred)^2))
+  gam.pred.rmse <- sqrt(mean((test_df$rent - gam.log.pred)^2))
+  
+  cv_rmse <- rbind(cv_rmse, c(log.log.pred.rmse, "log.log.lm"))
+  cv_rmse <- rbind(cv_rmse, c(untrans.pred.rmse, "reg.gam"))
+  cv_rmse <- rbind(cv_rmse, c(gam.pred.rmse, "log.gam"))
+}
+apartment_merged <- apartment_merged %>% mutate(zip = as.factor(zip))
+levels(apartment_merged$zip)
+colnames(cv_rmse) <- c("RMSE", "Method")
+cv_rmse$RMSE <- as.numeric(cv_rmse$RMSE)
+head(cv_rmse)
+```
+
+From the box plot of 10-fold test performances, it seems that the log log GAM 
+model had the lowest shifted IQR range. Thus, the log log GAM model is picked as the 
+final model to fit.
+
+```{r}
+ggplot(cv_rmse, aes(x = Method, y = RMSE, fill = Method)) + geom_boxplot() + 
+  ggtitle("Cross Validation Performance")
+```
+
+Similar to the steps taken in cross validation, the fused LASSO is applied to 
+consolidate the categorical variables. Then, the GAM model with smoothing applied 
+to the logged square feet is fitted to predict logged rent.
+
+```{r}
+best_lasso <- select_penal_param(apartment_train, 1, 201, 0)
 apartment_fuse_lasso <- prep_lasso_mat(apartment_train)
 gen_lasso_path <- genlasso::fusedlasso(y = log(apartment_train$rent), X = as.matrix(apartment_fuse_lasso$X), graph = apartment_fuse_lasso$penalties, 
                                              maxsteps = Inf, gamma = best_lasso$gamma)
@@ -399,64 +463,136 @@ beds_partitions <- combine_lasso_components("beds", lasso_betas, "beds0")
 apartment_merged <- consolidate_levels(zip_partitions, 4, "zip", apartment_merged)
 apartment_merged <- consolidate_levels(baths_partitions, 6, "baths", apartment_merged)
 apartment_merged <- consolidate_levels(beds_partitions, 5, "beds", apartment_merged)
+gam.mod.log.2 <- gam(log(rent) ~ s(log(sqft), k = 2001, m = 2) + zip + baths + beds + sqft.regressed + has.covered + has.garage + has.lot + has.street, data = apartment_merged, method = "REML")
+```
+
+While beds and baths are untouched, two zip codes are consolidated together via fused LASSO.
+
+```{r}
 zip_partitions
 ```
 
-```{r}
-log.log.mod <- lm(log(rent) ~ log(sqft) + zip + baths + beds + sqft.regressed + has.covered + has.garage + has.lot + has.street, data = apartment_merged)
-untrans.gam <- gam(rent ~ s(sqft, k = 2001, m = 2) + zip + baths + beds + sqft.regressed + has.covered + has.garage + has.lot + has.street, data = apartment_merged, method = "REML")
-gam.mod.log <- gam(log(rent) ~ s(log(sqft), k = 2001, m = 2) + zip + baths + beds + sqft.regressed + has.covered + has.garage + has.lot + has.street, data = apartment_merged, method = "REML")
+## Model Assessment
 
-perf_info_metrics <- data.frame(
-  Method = c("Log-Log-LM", "Plain-GAM", "Log-Log-GAM"),
-  AIC = c(AIC(log.log.mod), AIC(untrans.gam), AIC(gam.mod.log)),
-  BIC = c(BIC(log.log.mod), BIC(untrans.gam), BIC(gam.mod.log))
-)
-```
-
+The summary for the model is given below. The model was able to achieve a $R^2$ of 
+around 79% with an adjusted $R^2$ of 78.4%. Although the distributional assumptions 
+are not checked, almost all of the terms are very significant with p-value almost 
+0. 
 
 ```{r}
-perf_info_metrics
-```
-
-
-```{r}
-gam.check(gam.mod.log.2)
 summary(gam.mod.log.2)
 ```
 
+The normal QQ plot of the residuals is shown below. It can be seen that the residuals start 
+to deviate from the reference line after the theoretical quantiles exceed 2 or -2. Thus, 
+for the bulk of the observations, the residuals are generally falling along a normal 
+distribution.
 
 ```{r}
-bptest(gam.mod.log.2)
+residuals_df <- data.frame(
+  Observed = apartment_merged$rent,
+  Predicted = gam.mod.log.2$fitted.values
+)
+ggplot(residuals_df, aes(sample = Predicted)) + stat_qq() + stat_qq_line() + xlab("Theoretical Quantiles") + 
+  ylab("Observed Quantiles") + ggtitle("Residual QQ-Plot")
 ```
 
-```{r}
-dwtest(gam.mod.log.2)
-```
+However, due to the large sample size, and the fact that the residuals do deviate from 
+a normal distribution eventually, the lilliefour's test for normality came out to 
+have strong evidence for the residuals to be not norma.
 
 ```{r}
 lillie.test(gam.mod.log.2$residuals)
 ```
 
+An examination of the distribution of the residuals at various points shows that as 
+the logged observed rent got larger, the estimator goes from over-estimating the 
+log rent to under-estimating the rent. Thus, it suggests that the model is 
+biased with other factors potentially not accounted for.
+
+```{r}
+residuals_df <- residuals_df %>% mutate(Binned = floor(log(Observed) / 0.1) * 0.1) %>% 
+  mutate(Binned = as.factor(Binned)) %>% mutate(Residual = log(Observed) - Predicted)
+ggplot(residuals_df, aes(x = Binned, y = Residual)) + geom_boxplot() + ggtitle("Distribution of Residuals")
+```
+
+While the box plots seems to have similar widths, a BP test shows that there are 
+strong evidence against the hypothesis that the variance of the residuals are 
+equal.
+
+```{r}
+bptest(gam.mod.log.2)
+```
+
+Finally, a DW test for auto-correlation on the residuals show that there are significant 
+auto-correlation in the model. Thus, the residuals are not independent of each other.
+
+```{r}
+dwtest(gam.mod.log.2, alternative = c("two.sided"))
+```
+
+The failure of the assumptions indicates that a more careful and conservative interpretation of the 
+significance of the terms should be adopted. However, since a vast majority of terms are 
+highly significant, and the tests/confidence intervals for least square regression are 
+usually robust even with some violation of the assumptions, it seems that the model 
+can still reveal much notable factors that contributes to the rent.
+
+## Model Interpretation
+
+### Square Feet
+
+The multiplicative effect of square feet is plotted below for all range of square feet. 
+It can be seen that as the data gets thinner as the square footage increases, the spline 
+became more unstable with increasing width of confidence intervals. Towards the 
+5000 square feet apartment, where there seems to be only a few data points, the 
+confidence interval is from a bit less than 2.5 to almost 10 times. Thus, for the 
+high square feet apartments, the model would not be able to give much insight, besides 
+that their square footage contributed positively towards their rent, due to the lack 
+of the data points.
 
 ```{r}
 get_effect <- function(l_rent) {
   return(exp(l_rent - coef(gam.mod.log.2)[1]))
 }
 
-visreg(gam.mod.log.2, "sqft", trans = get_effect, 
-       ylab = "rent", cond=list(zip="60601", beds = "0", baths = "1", 
+visreg(gam.mod.log.2, "sqft", trans = get_effect, cond=list(zip="60601", beds = "0", baths = "1", 
                                 sqft.regressed = "False", has.covered = "False",
-                                has.garage = "False", has.lot = "False", has.street = "False"))
+                                has.garage = "False", has.lot = "False", has.street = "False"), 
+       ylab = "Multiplicative Effect", main = "Multiplicative Effect of Square Feet")
 ```
 
+Now, restricting the attention to the segment with more data, which would be the 
+apartments with less than 2000 sqft, there is a general increasing effect with greater 
+square footage. Furthermore, as the square feet increases, compared to the smaller 
+apartments, the increase in multiplicative effect for the larger apartment is 
+diminishing. For a small group of dorm sized apartments, the small size lead to 
+a reduction in the rent. However, the effect quickly became positive as the 
+square footage approaches 500 sqft. Finally, it is worth noting that the the effect 
+curve is not very smooth. Combined with the fact that there may be omitted effects 
+that lead to bias from the model diagnosis earlier, it may be that the square feet 
+have acted as a proxy variable for some unincluded factors in the model. For instance, 
+as the apartments get larger, they are likely to become more luxurious with more amenities. 
+Then, for the larger apartments, there are several spikes in the estimated effects of 
+square feet. It is possible that the spikes may be actually better explained by factors 
+such as amenities, which are not included. Thus, a potential improvement for the model 
+is to reliably include more factors, which could make it more clear on whether the square 
+footage has an actually complicated structure with respect to effects on rent.
+
 ```{r}
-visreg(gam.mod.log.2, "sqft", trans = get_effect, 
-       data = apartment_merged, ylab = "rent", xlim = c(200, 2500), 
-       ylim = c(0, 4), cond=list(zip="60601", beds = "0", baths = "1", 
+sqft_full_vs <- visreg(gam.mod.log.2, "sqft", trans = get_effect, 
+       data = apartment_merged, ylab = "rent", 
+       cond=list(zip="60601", beds = "1", baths = "1", 
                                 sqft.regressed = "False", has.covered = "False",
-                                has.garage = "False", has.lot = "False", has.street = "False"))
+                                has.garage = "False", has.lot = "False", has.street = "False"), 
+       plot = FALSE)
+sqft_sub_vs <- subset(sqft_full_vs, sqft <= 2000)
+plot(sqft_sub_vs, ylab = "Multplicative Effect", main = "Multiplicative Effect of Square Feet")
 ```
+
+### Zip Codes
+
+The multiplicative effects of zip codes are added to the geospatial data of 
+Chicago zip codes in order to visualize the effects of zip codes.
 
 ```{r}
 gam.mod.coef <- coef(gam.mod.log.2)
@@ -485,9 +621,18 @@ zip_coef_df <- merge(x = zip_id_df, y = zip_coef_df, by = "zip", all.x = TRUE)
 zip.geo.df <- tidy(zip.map)
 zip.geo.df <- merge(x = zip.geo.df, y = zip_coef_df, by = "id", all.x = TRUE)
 zip.geo.df$effect <- exp(zip.geo.df$effect)
-head(zip.geo.df)
 ```
 
+The map of multiplicative effects by zip codes is shown below. As mentioned before, 
+the reference level for zip is zip area with the median rent. From the map, it seems 
+that the coastal areas, as well as the areas around and north of downtown correspond 
+to higher apartment rent. Then, the southern area inland as well as the most northern 
+zip codes have a reduced rent compared to the median zip code. While the relatively lower 
+rent associated with the southern area is understandable due to the security issue in 
+south Chicago, it is surprising that the northern tip also has a reduced rent. Some 
+Google search reveals that it may be entering Northern Chicago, which is not the same 
+as Chicago. Consequently, it may be transitioning into lower density areas with land use 
+not as tight as Chicago proper.
 
 ```{r}
 ggplot(data = zip.geo.df) +
@@ -496,6 +641,10 @@ ggplot(data = zip.geo.df) +
   coord_map() + ggtitle("Multiplicative Effect to Rent by Zip")
 ```
 
+### Beds and Baths
+
+The confidence intervals and point estimates for beds and baths are extracted 
+from the summary information of the model.
 
 ```{r}
 confint.paragam <- function(mod, level = 0.95) {
@@ -525,16 +674,43 @@ confint.paragam <- function(mod, level = 0.95) {
 gam.confint <- confint.paragam(gam.mod.log.2) %>% select(Term, Estimate, L, U)
 ```
 
+There are significant multiplicative effects on the rent depending on whether it's a 
+studio, or apartment with various number of bedrooms. The increase in rent from 
+a studio to a single bedroom apartment is slightly lower than 1.15 times. Then, for each 
+subsequent number of bedrooms, the apartments get around 0.05 times more expensive compared 
+to the studio apartments.
 
 ```{r}
-
 gam.confint.beds <- gam.confint %>% filter(grepl("beds", Term, fixed = T))
-ggplot(gam.confint.beds, aes(x = Term, y = exp(Estimate), color = Term)) + geom_point(size = 3) + geom_errorbar(aes(ymin=exp(L), ymax=exp(U)), width=.3)
+ggplot(gam.confint.beds, aes(x = Term, y = exp(Estimate), color = Term)) + scale_y_continuous(limits = c(1, 1.4), breaks = seq(1, 1.4, 0.05)) +
+  geom_point(size = 3) + 
+  geom_errorbar(aes(ymin=exp(L), ymax=exp(U)), width=.3) + xlab("Bedrooms") + ylab("Multiplicative Effect") + 
+  ggtitle("Multiplicative Effect of Bedroms") 
 ```
 
+The bathroom case seems to be more interesting. As the number of bathroom increases, 
+there seems to be more variety in the rent of the apartments. The addition of a 
+half-bath can be attributed with around 8% increase in the rent from a single bathroom 
+apartment. Then, adding a full-bathroom from a single bathroom can be attributed with around 
+20% increase from a single bathroom. Interestingly, 2 bathrooms with a half bath 
+is not significantly different from 3 bathrooms, where both can be attributed with around 
+35-40% increase in rent from single bath. Finally, having 3 full baths with a half bath 
+can be attributed with an increase in rent on the magnitude of 55-100% compared to 
+single bath. The large confidence interval can be attributed to the relatively small 
+number of apartment with these many bathrooms. However, it is clear that despite the 
+large range, apartments with 3 bath and a half bath are fairly luxurious compared 
+to the single bath apartments. In fact, even starting from the 2.5 bathroom apartments, 
+the increase in multiplicative effect is disproportional to the increase seen in 
+the 1.5 and 2 bath apartments. The disproportional change may suggests that the bathrooms 
+are correlated with some form of luxuriousness as the apartments become sort of like a 
+house.
 
 ```{r}
 gam.confint.baths <- gam.confint %>% filter(grepl("baths", Term, fixed = T))
-ggplot(gam.confint.baths, aes(x = Term, y = exp(Estimate), color = Term)) + geom_point(size = 3) + geom_errorbar(aes(ymin=exp(L), ymax=exp(U)), width=.3)
+ggplot(gam.confint.baths, aes(x = Term, y = exp(Estimate), color = Term)) + 
+  geom_point(size = 3) + geom_errorbar(aes(ymin=exp(L), ymax=exp(U)), width=.3) +
+  scale_y_continuous(limits = c(1, 2.05), breaks = seq(1, 2.05, 0.1)) +
+  xlab("Bathrooms") + ylab("Multiplicative Effect") + 
+  ggtitle("Multiplicative Effect of Bathrooms") 
 ```
 

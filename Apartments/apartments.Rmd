@@ -206,7 +206,7 @@ rent.plot <- ggplot(apartments_raw_small, aes(x=rent)) +
 rent.logplot <- ggplot(apartments_raw_small, aes(x=log(rent))) + 
   geom_histogram(bins=bw_rent, fill="#69b3a2", 
   color="#e9ecef", alpha=0.9)
-grid.arrange(rent.plot, rent.logplot)
+grid.arrange(rent.plot, rent.logplot, top="Distribution of Rent")
 ```
 
 The statistics of the rent presents a similar picture. The mean of the data is at \$2275, 
@@ -267,7 +267,7 @@ sqft.plot <- ggplot(apartments_raw_small, aes(x=sqft)) +
 sqft.plog <- ggplot(apartments_raw_small, aes(x=log(sqft))) + 
   geom_histogram(bins=bw_sqft, fill="#69b3a2", 
   color="#e9ecef", alpha=0.9)
-grid.arrange(sqft.plot, sqft.plog)
+grid.arrange(sqft.plot, sqft.plog, top = "Distribution of Sqft")
 ```
 
 ## Cleaning lot.fee
@@ -399,10 +399,10 @@ plot_as_percentage <- function(df, col, varname="", title="") {
   return(df_plot)
 }
 
-bed_plot <- plot_as_percentage(apartments_raw_small, "beds")
-baths_plot <- plot_as_percentage(apartments_raw_small, "baths")
+bed_plot <- plot_as_percentage(apartments_raw_small, "beds") + xlab("") + theme_bw()
+baths_plot <- plot_as_percentage(apartments_raw_small, "baths") + xlab("") + theme_bw()
 
-grid.arrange(bed_plot, baths_plot, ncol=2)
+grid.arrange(bed_plot, baths_plot, ncol=2, top = "Distribution of Beds and Baths")
 ```
 
 The frequency table of the baths and beds are given below. Since the purpose is to 
