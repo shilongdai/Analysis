@@ -26,12 +26,13 @@ BASE_URL = "https://sc-trade.tools/shops/"
 HEADERS = {
     "User-Agent": ua.random
 }
-SHOP_SELECT = "//select[@id = 'shopNameSelect']"
+SHOP_SELECT = "//div[contains(@class, 'form-select-options')]"
+SHOP_OPTION = ".//div[contains(@class, 'form-select-option')]"
 SELL_WAIT = "//h2[contains(text(),'Sell')]"
 BUY_WAIT = "//h2[contains(text(),'Buy')]"
 BUY_TABLE = "//h2[contains(text(),'Buy')]/following-sibling::app-transactions/table"
 SELL_TABLE = "//h2[contains(text(),'Sell')]/following-sibling::app-transactions/table"
-INVENTORY_REGEX = r"Max (?P<stock>[0-9,]+) units \+ (?P<rate>[0-9,]+)/min"
+INVENTORY_REGEX = r"Max (?P<stock>[0-9,]+) SCU \+ [<>=]*(?P<rate>[0-9,]+)/min"
 
 
 chrom_param = "--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) " \
@@ -42,8 +43,8 @@ def get_shops(driver, wait):
     driver.get(BASE_URL)
     wait.until(EC.presence_of_element_located((By.XPATH, SHOP_SELECT)))
     selector = driver.find_element(By.XPATH, SHOP_SELECT)
-    selector_options = selector.find_elements(By.XPATH, "//option")
-    return [s.get_attribute("value") for s in selector_options]
+    selector_options = selector.find_elements(By.XPATH, SHOP_OPTION)
+    return [s.get_attribute("innerText").strip() for s in selector_options]
 
 
 def get_table_commodities(table):
@@ -57,11 +58,13 @@ def get_table_commodities(table):
         invent_elt = row_elements[2]
 
         commodity_name = com_elt.text.strip()
-        price = locale.atof(price_elt.text.strip())
+        price = locale.atof(price_elt.text.strip()) / 100
         invent_text = invent_elt.text.strip()
         invent_search = re.search(INVENTORY_REGEX, invent_text)
-        stock_amt = locale.atof(invent_search.group("stock"))
-        refresh_rate = locale.atof(invent_search.group("rate"))
+        if invent_search is None:
+            print(invent_text)
+        stock_amt = locale.atof(invent_search.group("stock")) * 100
+        refresh_rate = locale.atof(invent_search.group("rate")) * 100
         com = Commodity(commodity_name, price, stock_amt, refresh_rate)
         result.append(com)
     return result
@@ -72,7 +75,7 @@ if __name__ == "__main__":
     for param in chrom_param.split(","):
         if len(param.strip()) != 0:
             chrome_options.add_argument(param.strip())
-    driver = webdriver.Chrome(service=Service(r"./chromedriver"), options=chrome_options)
+    driver = webdriver.Chrome(r"./chromedriver", options=chrome_options)
     wait = WebDriverWait(driver, 10)
 
     shops = get_shops(driver, wait)
