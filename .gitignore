@@ -27,3 +27,5 @@
 /TradeRoute/chromedriver
 /NNMinst/mnist_test.csv
 /NNMinst/mnist_train.csv
+/YelpSentiment/.ipynb_checkpoints/
+/YelpSentiment/yelp-distil-bert/
