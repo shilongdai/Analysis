@@ -28,4 +28,6 @@
 /NNMinst/mnist_test.csv
 /NNMinst/mnist_train.csv
 /YelpSentiment/.ipynb_checkpoints/
-/YelpSentiment/yelp-distil-bert/
+/YelpSentiment/yelp-distil-bert*
+/YelpSentiment/*.parquet
+/YelpSentiment/*.json
