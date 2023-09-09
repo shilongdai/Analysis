@@ -17,7 +17,7 @@ def compute_accuracy(eval_pred):
     return {"balanced_accuracy": balanced, "roc_auc": roc_auc, "kappa": kappa, "f1": f1}
 
 
-def tokenize_and_label(batch, tokenizer):
+def tokenize_and_label(tokenizer, batch):
     result = tokenizer(batch["text"], truncation=True)
     result["label"] = 1 * np.array(batch["label"]) >= 4
     return result
