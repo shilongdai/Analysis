@@ -40,12 +40,12 @@ def plot_training(trainer):
 
 def plot_eval(trainer):
     metric_df = pd.DataFrame(trainer.state.log_history)[["epoch", "eval_kappa",
-                                                     "eval_f1", "eval_balanced_accuracy"]]
+                                                         "eval_f1", "eval_balanced_accuracy"]]
     metric_df = metric_df.rename(columns={"eval_kappa": "Kappa",
-                          "eval_f1": "F1", "eval_balanced_accuracy":
-                          "Balanced Accuracy"})
+                                          "eval_f1": "F1", "eval_balanced_accuracy":
+                                              "Balanced Accuracy"})
     metric_df.dropna().set_index("epoch").plot()
-    plt.title("Training Metrics")
+    plt.title("Eval Metrics")
     plt.show()
 
 
