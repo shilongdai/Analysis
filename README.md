@@ -39,4 +39,29 @@ The goal is to optimize the decision of applying to something like universities,
 
 In many simulation games, there is an element of trade. Typically, the player visits various producers, which sells a certain set of good for a low price, and then delivers the goods to various consumers, which would purchase the goods for a higher price. A natural in these cases would be to maximize the profit after a successful run. For this analysis, the focus is on Star Citizen, which is a space sim game currently in development. In SC, each outposts on planets/moons, and space stations has a list of goods that they would sell and purchase. For instance, a mining outposts would sell various minerals while buying things like medical supplies. Often, the producing location would sell the goods at a cheaper price. Thus, a trading strategy would be to purchase goods from the producing locations to sell in major hubs like space stations or cities. Thus, the goal would be to determine the optimal producers/consumers to visit, and the amount to purchase/sell. The problem is NP-hard, but it can be formulated as a mixed integer programming problem under the decision theory framework.
 
+## NNMnist
+
+A quick project to get started with CNN and Pytorch via the MNIST dataset. As a baseline, gradient boosting is applied 
+to achieve an accuracy of 98%. Then, a CNN inspired by the VGG architecture is used to achieve an accuracy of 99% on 
+the test set.
+
+## YelpSentiment
+
+This is a project that finetunes the distilled BERT model on the Yelp ratings dataset to perform sentiment classification. 
+To convert the ratings data into sentiment label, the reviews with rating <= 2 are considered to be negative, while 
+rating >= 4 are considered positives. The medium rating of 3 is discarded. Next, since the ratings are unbalanced with a 
+large number of 4-5 star reviews, a balanced version of the training set is also created by down sampling. 
+Various tuning methods were attempted for max of 4 epochs each, and the performances on a test set of around 120K 
+entries are summarized below.
+
+| Method               | Data       | Train N | F1   | Kappa |
+|----------------------|------------|---------|------|-------|
+| Classifier Only      | Balanced   | 217928  | 0.92 | 0.82  |
+| Classifier Only      | Unbalanced | 554372  | 0.94 | 0.86  |
+| Full Tuning          | Balanced   | 217928  | 0.93 | 0.84  |
+| LORA                 | Balanced   | 217928  | 0.96 | 0.91  |
+| LORA + Weighted Loss | Unbalanced | 554372  | 0.97 | 0.94  |
+
+Thus, it would seem that the data size had some effect on the performance, as well as the difficulty of the optimization 
+problem (full fine-tuning vs LORA).
 
