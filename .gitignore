@@ -31,3 +31,4 @@
 /YelpSentiment/yelp-distil-bert*
 /YelpSentiment/*.parquet
 /YelpSentiment/*.json
+.Rproj.user
