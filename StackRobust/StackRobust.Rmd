@@ -1,0 +1,353 @@
+---
+title: "Stackloss Analysis"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r, include=FALSE, warning=FALSE, message=FALSE}
+require(tidyverse)
+require(ggplot2)
+require(faraway)
+require(corrplot)
+require(lmtest)
+require(ggpubr)
+require(forecast)
+require(car)
+require(MASS)
+require(quantreg)
+
+set.seed(42)
+```
+
+## Introduction
+
+The stack loss plant data of Brownlee (1965) contains 21 days of measurements from a plant's oxidation of ammonia to nitric acid. The nitric oxide pollutants are captured in an absorption tower. The variables are defined as follow:
+
+| Variable Name | Variable Type |                                           Description                                            |
+|:-----------------:|:-----------------:|:----------------------------------:|
+|  Stack Loss   |   Numerical   | 10 times the percentage of ammonia going into the plant that escapes from the absoroption column |
+|    Airflow    |   Numerical   |                                  Rate of operation of the plant                                  |
+|  Water Temp   |   Numerical   |                        Cooling water temperature in the absorption tower                         |
+|   Acid Conc   |   Numerical   |                    Acid concentration of circulating acid minus 50 times 10.                     |
+
+: Stack loss Variables
+
+The goal is to study the relation between the efficiency of the plant and the measured variables over the 21 day period.
+
+```{r, include=FALSE, message=FALSE, warning=FALSE}
+data("stackloss")
+head(stackloss)
+```
+
+## EDA
+
+The distributions of the variables of interest are plotted below. Due to the small amount of data, the histograms are not connected together. Nevertheless, it would seem that the Air Flow is concentrated around 60, the water Temp around 18 and 24, the Acid Conc around 88, and the Stack Loss mostly around 15. For both the Acid Conc and Stack Loss variable, there are points well separated from the main group with almost no neighbors.
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+airflow.plt <- ggplot(data = stackloss, aes(x = Air.Flow)) + geom_density() + 
+  geom_histogram(aes(y = after_stat(density))) + 
+  xlab("Air Flow") + ylab("Density")
+water.temp.plt <- ggplot(data = stackloss, aes(x = Water.Temp)) + geom_density() + 
+  geom_histogram(aes(y = after_stat(density))) + 
+  xlab("Water Temp") + ylab("")
+acid.conc.plt <- ggplot(data = stackloss, aes(x = Acid.Conc.)) + geom_density() + 
+  geom_histogram(aes(y = after_stat(density))) + 
+  xlab("Acid Conc") + ylab("Density")
+stack.loss.plt <- ggplot(data = stackloss, aes(x = stack.loss)) + geom_density() + 
+  geom_histogram(aes(y = after_stat(density))) + 
+  xlab("Stack Loss") + ylab("")
+
+combined.plt <- ggarrange(airflow.plt, water.temp.plt, 
+                          acid.conc.plt, stack.loss.plt, 
+                          nrow = 2, ncol = 2)
+annotate_figure(combined.plt, top = text_grob("Var Dist", 
+                                              face = "bold"))
+```
+
+A correlation plot between the variables reveal that all of the predictors seems to be fairly correlated with the Stack Loss variable. In addition, there are notable colinearity between the Air Flow variable and the other variables. After all, Air Flow is the rate of operation of the plant.
+
+```{r, echo=F}
+cor.mat <- cor(stackloss)
+rownames(cor.mat) <- c("Air Flow", "Water Temp", "Acid Conc", "Stack Loss")
+colnames(cor.mat) <- row.names(cor.mat)
+corrplot(cor.mat, type = "upper", title="Correlation Matrix", mar=c(0,0,2,0),)
+```
+
+The Acid Conc variable had the least correlation with the Stack Loss variable. A closer examination reveals that as the Acid Conc increases, the Stack Loss becomes increasingly scattered, though with a positive relationship. Examination of the other variables did not reveal any interesting phenomenons with the small size of the dataset besides a strong linear relationship.
+
+```{r, echo = F}
+ggplot(data = stackloss, aes(x = Acid.Conc., y = stack.loss)) + geom_point() + 
+  xlab("Acid Conc") + ylab("Stack Loss") + ggtitle("Stack Loss vs Acid Conc")
+```
+
+```{r, include=FALSE}
+ggplot(data = stackloss, aes(x = Air.Flow, y = stack.loss)) + geom_point()
+```
+
+```{r, include=FALSE}
+ggplot(data = stackloss, aes(x = Water.Temp, y = stack.loss)) + geom_point()
+```
+
+## OLS
+
+### Results
+
+The main effects of each factor can be studied via linear regression. Given that only 21 data points are in the dataset, a linear regression consisting of main effects is probably the most complicated model suitable for the dataset. After performing an OLS on the full data, the following estimates were found with an adjusted $R^2$ of 90%:
+
+| Effect Name | Estimate | Lower Bound (95% CI) | Upper Bound (95% CI) |
+|-------------|:--------:|:--------------------:|:--------------------:|
+| Air Flow    |   0.72   |         0.43         |         1.00         |
+| Water Temp  |   1.30   |         0.52         |         2.07         |
+| Acid Conc   |  -0.15   |        -0.48         |         0.18         |
+
+: Coefficients of OLS
+
+Estimates from the OLS suggest that both the Air Flow and Water Temperature have a significant positive impact on Stack Loss.
+
+```{r, include=FALSE}
+ols.mod <- lm(stack.loss ~ ., data = stackloss)
+summary(ols.mod)
+```
+
+```{r, include=FALSE}
+confint(ols.mod)
+```
+
+### Diagnostics
+
+#### Basic Assumptions
+
+The residuals from the model did not exhibit significant deviation from normality as verified via the QQ plot and a Shapiro-Wilk test. The data points are scarce enough so that there are no evidence to suggest significant heteroskedacity both visually and via a Breusche-Pagan test. No notable phenomenons can be seen from the ACF/PACF plot of the residuals, but a Durbin-Watson test did reveal a significant auto-correlation of lag 1, which is reasonable since the data is technically a daily time-series over 21 days. Finally, examinations of added variable plots and partial residual plots revealed that the linear model seemed to be structurally sound with the amount of data available.
+
+```{r, include=FALSE}
+crPlots(ols.mod)
+```
+
+```{r, include=FALSE}
+avPlots(ols.mod)
+```
+
+```{r, include=FALSE}
+bptest(ols.mod)
+```
+
+```{r, include=FALSE}
+shapiro.test(residuals(ols.mod))
+```
+
+```{r, include=FALSE}
+n <- nrow(stackloss)
+ols.res.lag1 <- data.frame(res = residuals(ols.mod)[1:(n - 1)], 
+                           res1 = residuals(ols.mod)[2:n])
+ggplot(ols.res.lag1, aes(x = res, y = res1)) + geom_point()
+```
+
+```{r, include=FALSE}
+tsdisplay(residuals(ols.mod))
+```
+
+```{r, include=FALSE}
+dwtest(ols.mod)
+```
+
+#### Colinearity
+
+As expected per the correlation matrix, there are some degree of colinearity within this dataset. The condition number of the $X^T X$ matrix is around 58, which can be considered as high. Nevertheless, the variables with high VIF, Air Flow and Water Temp, both turned out to be significant with the OLS model. The Acid Conc only had a slight inflation by a factor of 1.3 but it was not significant. Thus, colinearity would not be a major concern in this case.
+
+|  Variable  | VIF  |
+|:----------:|:----:|
+|  Air Flow  | 2.91 |
+| Water Temp | 2.57 |
+| Acid Conc  | 1.33 |
+
+: VIFs
+
+```{r, include=FALSE}
+vif(ols.mod)
+```
+
+```{r, include=FALSE}
+x <- model.matrix(ols.mod)[,-1]
+e <- eigen(t(x) %*% x)
+e$val
+```
+
+```{r, include=FALSE}
+sqrt(e$val[1]/e$val)
+```
+
+#### Interesting Points
+
+The most notable results from the diagnostic is the presence of potential influential points. Entries 1, 4, and 21 seems to have relatively high Cook's distance.
+
+```{r, echo=FALSE}
+plot(ols.mod, which = 5, sub.caption="", main = "Stack Loss OLS")
+```
+
+However, despite point 4 having a large residual, it had a leverage of around 0.13, which means that it did not artificially tilt the estimated hyper-plane. Point 1 had a relatively high leverage at 0.3 with a studentized residual of greater than 1, but it seems to be mostly aligned with the distribution of the residuals. Finally, point 21 had relatively high residuals and leverages, and had an unusually large studentized residuals in context of the overall distribution. Thus, point 21 seems to demand additional inspection.
+
+```{r, echo=F}
+stud <- -rstudent(ols.mod)
+top.resid <- as.integer(names(sort(abs(stud), decreasing = T)))[1:5]
+resid.labels <- ifelse(1:length(stud) %in% top.resid, 1:length(stud), "")
+par(mfrow = c(1, 2))
+qq.plt <- qqnorm(stud, ylab = "Studentized Residuals", 
+                 main = "Top Residuals", 
+                 ylim = extendrange(stud, f = 0.1))
+abline(0, 1)
+text(qq.plt[[1]], qq.plt[[2]], resid.labels, pos = 3)
+hat_values = hatvalues(ols.mod)
+halfnorm(hat_values, ylab = "Leverages", main = "Top Leverages", nlab = 5)
+```
+
+Considering the distribution of the variables in EDA, point 21 lies on the upper extreme of all the variables. It had a fitted value of around 22, which severely under-estimates the true stack loss. Thus, it can be fairly influential for the model. Furthermore, the under-estimation suggests non-linear behavior as the variables approaches the upper extreme region.
+
+| Entry | Air Flow | Water Temp | Acid Conc | Stack Loss |
+|:-----:|:--------:|:----------:|:---------:|:----------:|
+|  21   |    80    |     27     |    89     |     42     |
+
+: Interesting Points
+
+```{r, include=FALSE}
+stackloss[c(21, 1), ]
+```
+
+## Robust Methods
+
+To better assess the effect of the variables knowing the existence of influential points, robust methods including LAD, Huber, and LTS regression are fitted to the data. In LAD regression, the loss function is to minimize the mean absolute deviation, while the Huber loss is a smooth piece-wise function with smaller residuals mapped to the quadratic loss and larger residuals mapped via the LAD loss. Finally, the LTS regression attempts to only minimize the smallest Q terms in the quadratic loss. In this case, Q is picked as $\lfloor n / 2 \rfloor + \lfloor \frac{p + 1}{2} \rfloor$. The results are tabulated below with 95% confidence interval in parenthesis. Note that bootstrapping was used to estimate the interval for the LTS method.
+
+| Variable   |         LAD          |        Huber        |        LTS         |
+|------------|:--------------------:|:-------------------:|:------------------:|
+| Air Flow   |  0.83 (0.51, 1.14)   |  0.83 (0.61, 1.05)  | 0.75 (0.55, 0.97)  |
+| Water Temp |  0.57 (0.32, 1.41)   |  0.93 (0.33, 1.52)  | 0.33 (-0.23, 0.84) |
+| Acid Conc  | -0.06 (-0.21, -0.02) | -0.13 (-0.38, 0.12) | \~0 (-0.26, 0.24)  |
+
+: Robust Estimates
+
+In addition, a closer examination of the Huber regression revealed that the final output of the re-weighted iterative approach to solving the M-estimation method assigned \< 1 weights to points 21, 4, and 3 in increasing weight order. These are exactly the top 3 points in terms of studentized residuals for the OLS.
+
+Compared to the OLS estimates, there is generally a lower estimate for the effect of Water Temp. In fact, the LTS would consider Water Temp to not be significant. The Acid Conc is still insignificant except for the case of the LAD model.
+
+```{r, include=FALSE}
+lad.mod <- rq(stack.loss ~ ., data = stackloss)
+summary(lad.mod)
+```
+
+```{r, include=FALSE}
+resid.lad.plt <- ggplot(mapping = aes(x = lad.mod$fitted.values, 
+                                      y = residuals(lad.mod))) + 
+  geom_point() + geom_smooth()
+scale.lad.plt <- ggplot(mapping = aes(x = lad.mod$fitted.values, 
+                                      y = sqrt(abs(residuals(lad.mod))))) + 
+  geom_point() + geom_smooth()
+
+ggarrange(resid.lad.plt, scale.lad.plt, nrow = 2)
+```
+
+```{r, include=FALSE}
+huber.mod <- rlm(stack.loss ~ ., data = stackloss)
+summary(huber.mod)
+```
+
+```{r, include=FALSE}
+plot(huber.mod)
+```
+
+```{r, include=FALSE}
+huber.weights = c(huber.mod$w)
+names(huber.weights) <- 1:nrow(stackloss)
+sort(huber.weights)
+```
+
+```{r, include=FALSE}
+broom::tidy(x = huber.mod, conf.int = TRUE)
+```
+
+```{r, include=FALSE}
+lts.mod <- ltsreg(stack.loss ~ ., data = stackloss, nsamp="exact")
+coef(lts.mod)
+```
+
+```{r, include=FALSE}
+resid.lts.plt <- ggplot(mapping = aes(x = lts.mod$fitted.values, 
+                                      y = residuals(lts.mod))) + 
+  geom_point() + geom_smooth()
+scale.lts.plt <- ggplot(mapping = aes(x = lts.mod$fitted.values, 
+                                      y = sqrt(abs(residuals(lts.mod))))) + 
+  geom_point() + geom_smooth()
+
+ggarrange(resid.lts.plt, scale.lts.plt, nrow = 2)
+```
+
+```{r, include=FALSE}
+bcoef <- matrix(0, 5000, 4)
+for(i in 1:5000){
+  newy <- predict(lts.mod) + residuals(lts.mod)[sample(21, rep=T)]
+  brg <- ltsreg(newy ~ . - stack.loss, data = stackloss, nsamp="best")
+  bcoef[i,] <- brg$coef
+}
+```
+
+```{r, include=FALSE}
+colnames(bcoef) <- names(coef(lts.mod))
+apply(bcoef, 2, function(x) quantile(x, c(0.025,0.975)))
+```
+
+## OLS without Previous Influential Points
+
+In addition to the robust methods, a separate OLS model without point 21 is fitted to better capture the relation in the common operating settings. The same diagnostic process is applied with no significant deviation from the model assumptions. The adjusted $R^2$ increased to 94%. The results are summarized below.
+
+| Effect Name | Estimate | Lower Bound (95% CI) | Upper Bound (95% CI) |
+|-------------|:--------:|:--------------------:|:--------------------:|
+| Air Flow    |   0.89   |         0.64         |         1.14         |
+| Water Temp  |   0.82   |         0.13         |         1.51         |
+| Acid Conc   |  -0.11   |        -0.37         |         0.56         |
+
+: Coefficients of OLS
+
+Compared to the original OLS model, the Acid Conc variable is no longer significant while the Air Flow and Water Temp are still significant. The estimated effects of the Air Flow is greater than the effect found in the original OLS model. Similar to the robust methods, the effect of Water Temp is lower compared to the original OLS model.
+
+## Conclusion
+
+In the non-extreme operating ranges of the plant, it would be consistent with most methods to state that there are significant positive relation between the Air Flow and Water Temp measured with the Stack Loss. While the bootstrapped intervals for the LTS method suggested that Water Temp may not be significant, it arrived at a non-zero estimate still unlike the Acid Conc variable. Considering the fact that LTS only minimizes the well-fitted terms in the quadratic loss, and the fact that bootstrapping is less powerful than an analytical tests in general, it may be the case that LTS has been too conservative in estimating the effects. For the Acid Conc variable, it only has a significant negative association with Stack Loss for the LAD model, which suggests that the association is sensitive to the method and may be fairly unreliable.
+
+To optimize the efficiency of the plant and minimize Stack Loss in normal operation, the recommended approach would be to minimize the Air Flow while maintaining the required operating threshold. In addition, the Water Temp should be reduced to the extent feasible. If additional measurements are possible, then more data can be collected especially at the extreme regions of the variables to better estimate the relation in the extreme situations, and to further investigate the relation between Acid Conc and the Stack Loss.
+
+```{r, include=FALSE}
+stackloss.clean <- stackloss[c(-21), ]
+ols.clean.mod <- lm(stack.loss ~ ., stackloss.clean)
+summary(ols.clean.mod)
+```
+
+```{r, include=FALSE}
+plot(ols.clean.mod)
+```
+
+```{r, include=FALSE}
+confint(ols.clean.mod)
+```
+
+```{r, include=FALSE}
+crPlots(ols.clean.mod)
+```
+
+```{r, include=FALSE}
+avPlots(ols.clean.mod)
+```
+
+```{r, include=FALSE}
+bptest(ols.clean.mod)
+```
+
+```{r, include=FALSE}
+shapiro.test(residuals(ols.clean.mod))
+```
+
+```{r, include=FALSE}
+tsdisplay(residuals(ols.clean.mod))
+```
+
+```{r, include=FALSE}
+dwtest(ols.clean.mod)
+```
